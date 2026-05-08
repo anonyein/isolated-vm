@@ -1,14 +1,14 @@
 name: Build Android (Javet-linked)
 
 on:
-  workflow_dispatch:          # 允许手动触发
+  workflow_dispatch:
   push:
     branches: [ experimental ]
 
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
   NODE_HEADERS: 24.0.0
-  ANDROID_NDK_VERSION: r27c
+  ANDROID_NDK_VERSION: r26d          # 已改为 r26d
   ANDROID_NDK_HOME: /tmp/android-ndk
 
 jobs:
@@ -32,17 +32,17 @@ jobs:
       TRIPLET: ${{ matrix.triplet }}
       ABI: ${{ matrix.abi }}
 
-    steps:
+ steps:
       - name: Checkout 代码
         uses: actions/checkout@v5
 
-      # ---------- 1. 系统依赖（注意：不通过 apt 安装 cmake，而是后面安装 4.x） ----------
+      # ---------- 1. 系统依赖 ----------
       - name: 安装系统依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build curl tar zstd
 
-      # ---------- 2. 安装 CMake 4.0.0 以满足项目要求 ----------
+      # ---------- 2. 安装 CMake 4.0.0 ----------
       - name: 安装 CMake 4.0.0
         run: |
           curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
@@ -59,7 +59,7 @@ jobs:
           pnpm install --frozen-lockfile
           npx tsc -b
 
-      # ---------- 4. 配置 Android NDK ----------
+      # ---------- 4. 配置 Android NDK r26d ----------
       - name: 下载并配置 Android NDK
         run: |
           mkdir -p $ANDROID_NDK_HOME
@@ -68,7 +68,7 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      # ---------- 5. 下载 Javet V8 库（预签名 URL，注意有效期） ----------
+      # ---------- 5. 下载 Javet V8 库 ----------
       - name: 下载 Javet V8 库
         run: |
           mkdir -p deps/javet
@@ -77,18 +77,16 @@ jobs:
           file "deps/javet/${{ env.JAVET_SO_NAME }}"
 
       # ---------- 6. 下载 Node.js 头文件 ----------
-      # 原仓库使用 scripts/nodejs_select，如果该脚本存在则直接调用，否则提供一个备用下载方式
       - name: 下载 Node.js 头文件
         run: |
           if [ -f scripts/nodejs_select ]; then
             bash scripts/nodejs_select "deps/nodejs/${{ env.NODE_HEADERS }}"
           else
-            # 备用: 直接从官方下载
             mkdir -p deps/nodejs
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
-      # ---------- 7. CMake 配置 ----------
+      # ---------- 7. CMake 配置（关键修复） ----------
       - name: 配置 CMake
         shell: bash
         run: |
@@ -98,6 +96,7 @@ jobs:
             -DANDROID_ABI="${{ matrix.abi }}" \
             -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
             -DANDROID_STL=c++_shared \
+            -DCMAKE_LINKER_TYPE=DEFAULT \    # 添加此参数，解决 LLD 兼容问题
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
             -DV8_LIBRARY_TYPE=shared \
