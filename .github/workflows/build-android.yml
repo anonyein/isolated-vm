@@ -23,8 +23,8 @@ jobs:
             triplet: aarch64-linux-android
             ndk_api: 24
             download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
-          - abi: x86
-            triplet: i686-linux-android
+          - abi: x86_64                          # 改为 64 位
+            triplet: x86_64-linux-android        # 对应的三元组
             ndk_api: 24
             download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
 
