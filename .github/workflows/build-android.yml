@@ -128,13 +128,10 @@ jobs:
 
       - name: 移除不兼容的 CMake 属性和平台限制
         run: |
-          # 删除 LINKER_TYPE 和 CXX_MODULE_STD 属性
           find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
-          # 注释所有 “Unknown host platform” 和 “Unsupported API” 的错误分支
           find . -name "CMakeLists.txt" -exec sed -i '/Unknown host platform/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
-          # 额外注释可能裸露的 message(FATAL_ERROR ...)
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
       - name: 配置 CMake
@@ -157,20 +154,16 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 创建模块缓存目录
           mkdir -p "${PWD}/build/module_cache"
 
-          # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
 
-          # 启用模块扫描以支持项目自身的 C++20 模块
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
 
-          # 注入 Boost 头文件路径和模块支持标志
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -196,6 +189,24 @@ jobs:
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
             -G Ninja
+
+      - name: 修复编译参数（清理不兼容标志并注入必备参数）
+        shell: bash
+        run: |
+          echo "修复 build.ninja 中的编译和扫描参数..."
+
+          # 删除不兼容标志
+          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
+
+          # 确保 NDK clang++ 调用都包含必要的标志
+          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
+          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache -fimplicit-modules"
+          find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
+
+          echo "修复完成"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
