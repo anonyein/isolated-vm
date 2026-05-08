@@ -111,10 +111,9 @@ jobs:
       - name: 配置 CMake
         shell: bash
         run: |
-          # 生成假 FindBoost 模块（强制使用头文件模式）
+          # 生成假 FindBoost.cmake，强制使用系统 Boost 头文件
           mkdir -p cmake-modules
           cat > cmake-modules/FindBoost.cmake << 'BOOST_EOF'
-          message(STATUS "Using custom FindBoost (header-only)")
           set(Boost_FOUND TRUE)
           set(Boost_INCLUDE_DIRS /usr/include)
           set(Boost_LIBRARIES "")
@@ -134,10 +133,15 @@ jobs:
 
           # 组合模块路径（CMake 列表用分号分隔）
           MODULE_PATH="./cmake-modules;${AUTO_JS_PATH}"
-          echo "Final CMAKE_MODULE_PATH: ${MODULE_PATH}"
 
-          export TOOLCHAIN_FILE=./custom.android.toolchain.cmake
+          # 显式设定源码与构建目录，避免解析歧义
+          SOURCE_DIR="${PWD}"
+          BUILD_DIR="${PWD}/build"
+
+          export TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake"
           cmake \
+            -S "${SOURCE_DIR}" \
+            -B "${BUILD_DIR}" \
             -DCMAKE_MODULE_PATH="${MODULE_PATH}" \
             -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
             -DANDROID_ABI="${{ matrix.abi }}" \
@@ -145,14 +149,15 @@ jobs:
             -DANDROID_STL=c++_shared \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
-            -DCMAKE_DISABLE_FIND_PACKAGE_BoostConfig=TRUE \   # ← 关键新参数
+            -DCMAKE_DISABLE_FIND_PACKAGE_BoostConfig=TRUE \
+            -DBoost_NO_BOOST_CMAKE=ON \
+            -DBoost_INCLUDE_DIR=/usr/include \
             -DV8_LIBRARY_TYPE=shared \
-            -DV8_INCLUDE_DIR="$PWD/deps/v8/include" \
-            -DV8_SHARED_LIBRARY="$PWD/deps/javet/${{ env.JAVET_SO_NAME }}" \
-            -DV8_LIBRARY_PATH="$PWD/deps/javet" \
+            -DV8_INCLUDE_DIR="${PWD}/deps/v8/include" \
+            -DV8_SHARED_LIBRARY="${PWD}/deps/javet/${{ env.JAVET_SO_NAME }}" \
+            -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
-            -B build \
             -G Ninja
 
       - name: 构建
