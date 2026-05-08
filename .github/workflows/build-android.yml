@@ -170,6 +170,7 @@ jobs:
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
+            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
             -G Ninja
 
       - name: 构建
