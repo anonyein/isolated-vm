@@ -108,6 +108,9 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
+      - name: 创建缺失的 v8-gn.h（Node.js 头文件已移除该文件）
+        run: touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+
       - name: 配置 CMake
         shell: bash
         run: |
@@ -138,7 +141,6 @@ jobs:
           # 明确 V8 头文件位置（来自 Node.js 头文件）
           V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
           echo "V8 include dir: ${V8_INCLUDE_DIR}"
-          ls "${V8_INCLUDE_DIR}/v8-gn.h" && echo "v8-gn.h found" || echo "WARNING: v8-gn.h missing"
 
           cmake \
             -S "${PWD}" \
