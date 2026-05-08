@@ -111,47 +111,44 @@ jobs:
       - name: 配置 CMake
         shell: bash
         run: |
-          # 生成假 FindBoost.cmake，强制使用系统 Boost 头文件
-          mkdir -p cmake-modules
-          cat > cmake-modules/FindBoost.cmake << 'BOOST_EOF'
+          # ----- 伪造 Boost 安装目录，提供 BoostConfig.cmake -----
+          mkdir -p fake-boost/lib/cmake/Boost
+          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'EOF'
+          message(STATUS "Using fake BoostConfig (header-only)")
           set(Boost_FOUND TRUE)
           set(Boost_INCLUDE_DIRS /usr/include)
           set(Boost_LIBRARIES "")
           set(Boost_VERSION 1.83.0)
-          BOOST_EOF
+          EOF
+          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'EOF'
+          set(PACKAGE_VERSION 1.83.0)
+          set(PACKAGE_VERSION_COMPATIBLE TRUE)
+          EOF
 
-          # 自定义 Android 工具链
+          # ----- 自定义 Android 工具链 -----
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT)
           set(ANDROID_STL c++_shared)
           NDK_EOF
 
-          # 获取 auto_js 模块路径
+          # 获取 auto_js 模块路径（仍需要以找到 FindNpmPackage 等）
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
           echo "Auto JS module path: ${AUTO_JS_PATH}"
 
-          # 组合模块路径（CMake 列表用分号分隔）
-          MODULE_PATH="./cmake-modules;${AUTO_JS_PATH}"
-
-          # 显式设定源码与构建目录，避免解析歧义
-          SOURCE_DIR="${PWD}"
-          BUILD_DIR="${PWD}/build"
-
-          export TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake"
+          # 配置 CMake
           cmake \
-            -S "${SOURCE_DIR}" \
-            -B "${BUILD_DIR}" \
-            -DCMAKE_MODULE_PATH="${MODULE_PATH}" \
-            -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
+            -S "${PWD}" \
+            -B "${PWD}/build" \
+            -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
+            -DCMAKE_TOOLCHAIN_FILE="./custom.android.toolchain.cmake" \
             -DANDROID_ABI="${{ matrix.abi }}" \
             -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
             -DANDROID_STL=c++_shared \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
-            -DCMAKE_DISABLE_FIND_PACKAGE_BoostConfig=TRUE \
-            -DBoost_NO_BOOST_CMAKE=ON \
-            -DBoost_INCLUDE_DIR=/usr/include \
+            -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
+            -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
             -DV8_LIBRARY_TYPE=shared \
             -DV8_INCLUDE_DIR="${PWD}/deps/v8/include" \
             -DV8_SHARED_LIBRARY="${PWD}/deps/javet/${{ env.JAVET_SO_NAME }}" \
