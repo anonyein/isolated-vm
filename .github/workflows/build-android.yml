@@ -108,14 +108,22 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
-      # 新增：把头文件复制到项目第三方库期望的路径
-      - name: 将 Node 头文件复制到预期位置
+      - name: 将 Node 头文件复制到各子包预期位置
         run: |
+          # 给 packages/third_party/nodejs
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
+          # 给 packages/third_party/v8
+          mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
 
       - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
-        run: touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+        run: |
+          # 根目录下的 deps
+          touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+          # 子包中同样补上（其实 cp 已经带过去了，此处为双重保险）
+          touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+          touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
       - name: 彻底删除 LINKER_TYPE 与 CXX_MODULE_STD
         run: |
