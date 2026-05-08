@@ -153,18 +153,15 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 创建模块缓存目录并导出环境变量供工具链文件使用
-          export MODULE_CACHE_PATH="${PWD}/build/module_cache"
-          mkdir -p "${MODULE_CACHE_PATH}"
+          # 创建模块缓存目录
+          mkdir -p "${PWD}/build/module_cache"
 
-          # 自定义 Android 工具链（一次性追加所有必要标志）
+          # 自定义 Android 工具链（不再尝试设置复杂标志，留给 sed 后处理）
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 追加 Boost 头文件路径、模块映射和模块缓存路径
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=$ENV{MODULE_CACHE_PATH}" CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -190,14 +187,22 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 移除不支持的编译参数（兼容性清理）
+      - name: 修复编译和扫描参数（注入 Boost/模块标志，删除不兼容选项）
         shell: bash
         run: |
-          echo "清理 build.ninja 中可能残留的不兼容标志..."
+          echo "修复 build.ninja 中的编译和扫描参数..."
+
+          # 1. 删除不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          echo "清理完成"
+
+          # 2. 在 NDK 的 clang++ 命令后统一添加必需的标志
+          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
+          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache"
+          find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
+
+          echo "修复完成"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
