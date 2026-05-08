@@ -41,6 +41,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
 
+      - name: 准备独立的 Boost 头文件目录
+        run: |
+          mkdir -p /tmp/host-boost-headers
+          cp -r /usr/include/boost /tmp/host-boost-headers/boost
+
       - name: 安装 CMake 4.0.0
         run: |
           curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
@@ -156,8 +161,8 @@ jobs:
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
           # 强制关闭 C++20 模块扫描
           set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
-          # 允许使用宿主系统的 Boost 头文件（header-only）
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /usr/include")
+          # 只添加独立的 Boost 头文件，避免宿主系统的 glibc 冲突
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers")
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
