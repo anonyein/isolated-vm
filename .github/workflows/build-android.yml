@@ -162,9 +162,11 @@ jobs:
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
 
+          # 启用模块扫描以处理项目自身模块
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
 
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache" CACHE STRING "" FORCE)
+          # 只注入 Boost 头文件路径，不再注入标准库模块标志（改为在构建时处理 import std）
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -190,21 +192,23 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复编译参数（清理不兼容标志并注入必备参数）
+      - name: 修复编译参数及源码（处理 import std）
         shell: bash
         run: |
-          echo "修复 build.ninja 中的编译和扫描参数..."
+          echo "修复 build.ninja 和源码中的 import std..."
 
           # 删除不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
+          # 移除标准库模块相关标志，避免模块映射冲突
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 确保 NDK clang++ 调用都包含必要的标志
-          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
-          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache -fimplicit-modules"
-          find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
+          # 核心：将源码中的 import std; 替换为 #include <bits/stdc++.h>
+          find packages -name '*.cc' -exec sed -i 's/^import std;/\#include <bits\/stdc++.h>/g' {} \;
 
           echo "修复完成"
 
