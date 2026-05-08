@@ -108,6 +108,12 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
+      # 新增：把头文件复制到项目第三方库期望的路径
+      - name: 将 Node 头文件复制到预期位置
+        run: |
+          mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
+
       - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
         run: touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
@@ -144,7 +150,7 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 强制关闭 C++20 模块扫描（避免 NDK 工具链再次打开）
+          # 强制关闭 C++20 模块扫描，防止 CMake 4.0 自动启用
           set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
           NDK_EOF
 
