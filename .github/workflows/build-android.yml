@@ -153,16 +153,25 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
+          # 创建模块缓存目录（全局可写，供 Clang 自动生成 PCM）
+          mkdir -p "${PWD}/build/module_cache"
+
           # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
+
           # 添加宿主 Boost 头文件路径
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers")
-          # 启用标准库模块映射，以支持 import std;
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fimplicit-module-maps")
+
+          # 开启标准库模块的隐式映射和缓存，解决 import std; 问题
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fimplicit-module-maps"
+              CACHE STRING "" FORCE)
+          # 指定模块缓存路径（必须在 CMake 配置前创建）
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache"
+              CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
