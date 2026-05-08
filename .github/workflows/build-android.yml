@@ -1,4 +1,4 @@
-name: Build Android (Javet-linked)
+name: Build Android (Javet-linked, headless download)
 
 on:
   workflow_dispatch:
@@ -64,31 +64,37 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
+      - name: 安装 Playwright 浏览器
+        run: npx playwright install chromium
+
       - name: 下载 Javet SO (headless)
         run: |
-          npx playwright install chromium
-          node -e "
-            const { chromium } = require('playwright');
-            (async () => {
-              const browser = await chromium.launch();
-              const page = await browser.newPage();
-              const url = '${{ matrix.download_url }}';
+          cat > download.js << 'SCRIPT_END'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const url = process.env.DOWNLOAD_URL;
+            try {
               const [download] = await Promise.all([
-                page.waitForEvent('download'),
+                page.waitForEvent('download', { timeout: 60000 }),
                 page.goto(url, { waitUntil: 'networkidle' })
               ]);
-              await download.saveAs('deps/javet/${{ env.JAVET_SO_NAME }}');
+              await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
+              console.log('下载成功');
+            } catch (e) {
+              console.error('下载失败:', e);
+              process.exit(1);
+            } finally {
               await browser.close();
-            })()
+            }
+          })()
+          SCRIPT_END
+          mkdir -p deps/javet
+          node download.js
         env:
           DOWNLOAD_URL: ${{ matrix.download_url }}
-
-      # - name: 下载 Javet V8 库
-      #   run: |
-      #     mkdir -p deps/javet
-      #     echo "下载 ${{ matrix.abi }} 架构的 Javet SO..."
-      #     curl -L --retry 3 -o "deps/javet/${{ env.JAVET_SO_NAME }}" "${{ matrix.download_url }}"
-      #     file "deps/javet/${{ env.JAVET_SO_NAME }}"
+          JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
 
       - name: 下载 Node.js 头文件
         run: |
