@@ -156,7 +156,7 @@ jobs:
           # 创建模块缓存目录
           mkdir -p "${PWD}/build/module_cache"
 
-          # 自定义 Android 工具链（不再尝试设置复杂标志，留给 sed 后处理）
+          # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复编译和扫描参数（注入 Boost/模块标志，删除不兼容选项）
+      - name: 修复编译参数（注入必需标志，删除不兼容选项）
         shell: bash
         run: |
           echo "修复 build.ninja 中的编译和扫描参数..."
@@ -197,9 +197,18 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-          # 2. 在 NDK 的 clang++ 命令后统一添加必需的标志
+          # 2. 构建附加标志
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache"
+
+          # 如果 NDK 提供标准库模块映射，则显式使用
+          MODULE_MAP=$(find /tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1 -name module.modulemap -print -quit)
+          if [ -n "$MODULE_MAP" ]; then
+            echo "发现标准库模块映射: $MODULE_MAP"
+            EXTRA_FLAGS="$EXTRA_FLAGS -fmodule-map-file=$MODULE_MAP"
+          fi
+
+          # 将所有 clang++ 调用的前面插入附加标志
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
 
           echo "修复完成"
