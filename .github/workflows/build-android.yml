@@ -7,7 +7,7 @@ on:
 
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
-  NODE_HEADERS: 24.15.0          # 改为最新 24.15.0
+  NODE_HEADERS: 24.15.0
   ANDROID_NDK_VERSION: r26d
   ANDROID_NDK_HOME: /tmp/android-ndk
 
@@ -36,7 +36,7 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v5
 
-      - name: 安装系统依赖（包含 Boost）
+      - name: 安装系统依赖（包含 Boost 头文件）
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
@@ -111,27 +111,39 @@ jobs:
       - name: 配置 CMake
         shell: bash
         run: |
-          cat > ./custom.android.toolchain.cmake << 'EOF'
+          # 生成极简 FindBoost 模块，指向系统头文件
+          mkdir -p cmake-modules
+          cat > cmake-modules/FindBoost.cmake << 'BOOST_EOF'
+          set(Boost_FOUND TRUE)
+          set(Boost_INCLUDE_DIRS /usr/include)
+          set(Boost_LIBRARIES "")
+          set(Boost_VERSION 1.83.0)
+          BOOST_EOF
+
+          cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT)
           set(ANDROID_STL c++_shared)
-          EOF
+          NDK_EOF
 
-          export TOOLCHAIN_FILE=./custom.android.toolchain.cmake
+          # 把自定义模块路径放在最前面
+          CUSTOM_MODULE_PATH="${PWD}/cmake-modules"
+          AUTO_JS_MODULE_PATH=$(npm exec auto_js_cmake_include)
+          CMAKE_MODULE_PATH="${CUSTOM_MODULE_PATH}:${AUTO_JS_MODULE_PATH}"
+
+          export TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake"
           cmake \
-            -DCMAKE_MODULE_PATH=$(npm exec auto_js_cmake_include) \
-            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+            -DCMAKE_MODULE_PATH="${CMAKE_MODULE_PATH}" \
+            -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
             -DANDROID_ABI="${{ matrix.abi }}" \
             -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
             -DANDROID_STL=c++_shared \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
-            -DBoost_NO_BOOST_CMAKE=ON \
-            -DBoost_INCLUDE_DIR=/usr/include \
             -DV8_LIBRARY_TYPE=shared \
-            -DV8_INCLUDE_DIR="$PWD/deps/v8/include" \
-            -DV8_SHARED_LIBRARY="$PWD/deps/javet/${{ env.JAVET_SO_NAME }}" \
-            -DV8_LIBRARY_PATH="$PWD/deps/javet" \
+            -DV8_INCLUDE_DIR="${PWD}/deps/v8/include" \
+            -DV8_SHARED_LIBRARY="${PWD}/deps/javet/${{ env.JAVET_SO_NAME }}" \
+            -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
             -B build \
