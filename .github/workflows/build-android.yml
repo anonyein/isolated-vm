@@ -126,13 +126,6 @@ jobs:
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      - name: 彻底删除 LINKER_TYPE 与 CXX_MODULE_STD
-        run: |
-          find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
-          sed -i '/Unknown host platform/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
-          sed -i '/Unsupported API/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
-
       - name: 配置 CMake
         shell: bash
         run: |
@@ -153,19 +146,22 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 创建模块缓存目录
-          mkdir -p "${PWD}/build/module_cache"
-
-          # 自定义 Android 工具链
+          # 自定义 Android 工具链（重新启用模块扫描，并注入所需标志）
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
 
-          # 尝试关闭模块扫描（可能会被目标覆盖，最终用 sed 修正）
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+          # 默认重新开启模块扫描，保证 C++20 模块能被正确处理
+          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
+
+          # 注入 Boost 头文件路径、模块映射和缓存路径
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache" CACHE STRING "" FORCE)
           NDK_EOF
+
+          # 预先创建模块缓存目录
+          mkdir -p "${PWD}/build/module_cache"
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
           V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
@@ -189,28 +185,6 @@ jobs:
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
             -G Ninja
-
-      - name: 修复编译参数（清理不兼容标志，注入必需参数，启用隐式模块）
-        shell: bash
-        run: |
-          echo "修复 build.ninja 中的编译命令..."
-
-          # 1. 删除不兼容的标志
-          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-
-          # 2. 启用隐式模块（覆盖 CMake 可能添加的 -fno-implicit-modules）
-          find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
-
-          # 3. 构建要注入的额外标志（包含 -fimplicit-modules 以强制启用）
-          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
-          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache -fimplicit-modules"
-
-          # 4. 注入到所有 clang++ 调用中
-          find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
-
-          echo "修复完成"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
