@@ -1,14 +1,14 @@
 name: Build Android (Javet-linked)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:          # 手动触发
   push:
     branches: [ experimental ]
 
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
   NODE_HEADERS: 24.0.0
-  ANDROID_NDK_VERSION: r26d          # 已改为 r26d
+  ANDROID_NDK_VERSION: r26d        # 使用 r26d 避免与 CMake 4.0 的 LLD 兼容问题
   ANDROID_NDK_HOME: /tmp/android-ndk
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       TRIPLET: ${{ matrix.triplet }}
       ABI: ${{ matrix.abi }}
 
- steps:
+    steps:                          # 注意这里是两个空格缩进，与 jobs.build-android 对齐
       - name: Checkout 代码
         uses: actions/checkout@v5
 
@@ -86,7 +86,7 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
-      # ---------- 7. CMake 配置（关键修复） ----------
+      # ---------- 7. CMake 配置 ----------
       - name: 配置 CMake
         shell: bash
         run: |
@@ -96,7 +96,7 @@ jobs:
             -DANDROID_ABI="${{ matrix.abi }}" \
             -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
             -DANDROID_STL=c++_shared \
-            -DCMAKE_LINKER_TYPE=DEFAULT \    # 添加此参数，解决 LLD 兼容问题
+            -DCMAKE_LINKER_TYPE=DEFAULT \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
             -DV8_LIBRARY_TYPE=shared \
