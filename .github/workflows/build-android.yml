@@ -165,7 +165,7 @@ jobs:
           # 启用模块扫描以处理项目自身模块
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
 
-          # 只注入 Boost 头文件路径，不再注入标准库模块标志（改为在构建时处理 import std）
+          # 注入 Boost 头文件路径
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -202,12 +202,65 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
-          # 移除标准库模块相关标志，避免模块映射冲突
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 核心：将源码中的 import std; 替换为 #include <bits/stdc++.h>
+          # 创建假的 bits/stdc++.h 放在 NDK 的 C++ 头文件路径下
+          NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
+          mkdir -p "${NDK_CXX_HEADERS}/bits"
+          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
+          #include <cstdlib>
+          #include <cstdint>
+          #include <cstddef>
+          #include <cstring>
+          #include <cwchar>
+          #include <cstdio>
+          #include <cassert>
+          #include <algorithm>
+          #include <array>
+          #include <chrono>
+          #include <concepts>
+          #include <deque>
+          #include <exception>
+          #include <forward_list>
+          #include <functional>
+          #include <initializer_list>
+          #include <iomanip>
+          #include <iostream>
+          #include <iterator>
+          #include <limits>
+          #include <list>
+          #include <map>
+          #include <memory>
+          #include <new>
+          #include <numeric>
+          #include <optional>
+          #include <queue>
+          #include <random>
+          #include <ratio>
+          #include <set>
+          #include <span>
+          #include <sstream>
+          #include <stack>
+          #include <stdexcept>
+          #include <string>
+          #include <string_view>
+          #include <tuple>
+          #include <type_traits>
+          #include <unordered_map>
+          #include <unordered_set>
+          #include <utility>
+          #include <variant>
+          #include <vector>
+          #include <cmath>
+          #include <compare>
+          #include <ranges>
+          #include <bit>
+          #include <version>
+          STD_HEADER
+
+          # 将源码中的 import std; 替换为 #include <bits/stdc++.h>
           find packages -name '*.cc' -exec sed -i 's/^import std;/\#include <bits\/stdc++.h>/g' {} \;
 
           echo "修复完成"
