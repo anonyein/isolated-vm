@@ -69,7 +69,7 @@ jobs:
 
       - name: 下载 Javet SO (headless)
         run: |
-          cat > download.js << 'SCRIPT_END'
+          cat > download.cjs << 'SCRIPT_END'
           const { chromium } = require('playwright');
           (async () => {
             const browser = await chromium.launch();
@@ -91,7 +91,7 @@ jobs:
           })()
           SCRIPT_END
           mkdir -p deps/javet
-          node download.js
+          node download.cjs
         env:
           DOWNLOAD_URL: ${{ matrix.download_url }}
           JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
