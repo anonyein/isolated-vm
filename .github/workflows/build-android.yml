@@ -36,7 +36,7 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v5
 
-      - name: 安装系统依赖（包含 Boost）
+      - name: 安装系统依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
@@ -108,44 +108,43 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
-      - name: 准备 V8 头文件 (通过 Node.js 头文件提供)
-        run: |
-          mkdir -p deps/v8/include
-          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/include/node/* deps/v8/include/
-          ls deps/v8/include/v8.h  # 确认存在
-
       - name: 配置 CMake
         shell: bash
         run: |
-          # 伪造 BoostConfig
+          # 伪造 Boost 配置（解决 CONFIG 模式查找）
           mkdir -p fake-boost/lib/cmake/Boost
-          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'EOF'
-          message(STATUS "Using fake BoostConfig (header-only)")
+          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
           set(Boost_FOUND TRUE)
           set(Boost_INCLUDE_DIRS /usr/include)
           set(Boost_LIBRARIES "")
           set(Boost_VERSION 1.83.0)
-          EOF
-          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'EOF'
+          BOOST_EOF
+          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'BOOST_VER_EOF'
           set(PACKAGE_VERSION 1.83.0)
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
-          EOF
+          BOOST_VER_EOF
 
-          # 自定义工具链
+          # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT)
           set(ANDROID_STL c++_shared)
           NDK_EOF
 
+          # 获取 auto_js 模块路径
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
           echo "Auto JS module path: ${AUTO_JS_PATH}"
+
+          # 明确 V8 头文件位置（来自 Node.js 头文件）
+          V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
+          echo "V8 include dir: ${V8_INCLUDE_DIR}"
+          ls "${V8_INCLUDE_DIR}/v8-gn.h" && echo "v8-gn.h found" || echo "WARNING: v8-gn.h missing"
 
           cmake \
             -S "${PWD}" \
             -B "${PWD}/build" \
             -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
-            -DCMAKE_TOOLCHAIN_FILE="./custom.android.toolchain.cmake" \
+            -DCMAKE_TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake" \
             -DANDROID_ABI="${{ matrix.abi }}" \
             -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
             -DANDROID_STL=c++_shared \
@@ -154,7 +153,8 @@ jobs:
             -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
             -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
             -DV8_LIBRARY_TYPE=shared \
-            -DV8_INCLUDE_DIR="${PWD}/deps/v8/include" \
+            -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
+            -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
             -DV8_SHARED_LIBRARY="${PWD}/deps/javet/${{ env.JAVET_SO_NAME }}" \
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
