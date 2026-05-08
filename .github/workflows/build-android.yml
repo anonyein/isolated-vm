@@ -80,7 +80,6 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
-      # 关键修改：生成自定义工具链文件，解决 LLD 报错
       - name: 配置 CMake
         shell: bash
         run: |
@@ -92,6 +91,7 @@ jobs:
 
           export TOOLCHAIN_FILE=./custom.android.toolchain.cmake
           cmake \
+            -DCMAKE_MODULE_PATH=$(npm exec auto_js_cmake_include) \
             -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
             -DANDROID_ABI="${{ matrix.abi }}" \
             -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
