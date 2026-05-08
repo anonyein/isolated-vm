@@ -64,15 +64,12 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      # 安装 Playwright 包到 workspace 根
       - name: 安装 Playwright
         run: pnpm add -D -w playwright
 
-      # 下载 Playwright 所需的 Chromium 浏览器
       - name: 安装 Playwright 浏览器
         run: npx playwright install chromium
 
-      # 使用 headless 浏览器下载 Javet .so
       - name: 下载 Javet SO (headless)
         run: |
           cat > download.cjs << 'SCRIPT_END'
@@ -120,6 +117,14 @@ jobs:
           set(ANDROID_STL c++_shared)
           EOF
 
+          # 动态定位系统 Boost 的 CMake 配置目录
+          BOOST_DIR=$(find /usr/lib -maxdepth 4 -type d -name "Boost-*" -print -quit)
+          if [ -z "$BOOST_DIR" ]; then
+            echo "警告：未找到系统 Boost 配置目录，使用默认路径。"
+            BOOST_DIR="/usr/lib/x86_64-linux-gnu/cmake/Boost-1.83.0"
+          fi
+          echo "使用 Boost 配置目录：$BOOST_DIR"
+
           export TOOLCHAIN_FILE=./custom.android.toolchain.cmake
           cmake \
             -DCMAKE_MODULE_PATH=$(npm exec auto_js_cmake_include) \
@@ -129,8 +134,8 @@ jobs:
             -DANDROID_STL=c++_shared \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
-            -DBoost_NO_BOOST_CMAKE=ON \
-            -DBoost_INCLUDE_DIR=/usr/include \
+            -DBoost_DIR="$BOOST_DIR" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
             -DV8_LIBRARY_TYPE=shared \
             -DV8_INCLUDE_DIR="$PWD/deps/v8/include" \
             -DV8_SHARED_LIBRARY="$PWD/deps/javet/${{ env.JAVET_SO_NAME }}" \
