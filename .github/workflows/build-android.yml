@@ -64,12 +64,31 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      - name: 下载 Javet V8 库
+      - name: 下载 Javet SO (headless)
         run: |
-          mkdir -p deps/javet
-          echo "下载 ${{ matrix.abi }} 架构的 Javet SO..."
-          curl -L --retry 3 -o "deps/javet/${{ env.JAVET_SO_NAME }}" "${{ matrix.download_url }}"
-          file "deps/javet/${{ env.JAVET_SO_NAME }}"
+          npx playwright install chromium
+          node -e "
+            const { chromium } = require('playwright');
+            (async () => {
+              const browser = await chromium.launch();
+              const page = await browser.newPage();
+              const url = '${{ matrix.download_url }}';
+              const [download] = await Promise.all([
+                page.waitForEvent('download'),
+                page.goto(url, { waitUntil: 'networkidle' })
+              ]);
+              await download.saveAs('deps/javet/${{ env.JAVET_SO_NAME }}');
+              await browser.close();
+            })()
+        env:
+          DOWNLOAD_URL: ${{ matrix.download_url }}
+
+      # - name: 下载 Javet V8 库
+      #   run: |
+      #     mkdir -p deps/javet
+      #     echo "下载 ${{ matrix.abi }} 架构的 Javet SO..."
+      #     curl -L --retry 3 -o "deps/javet/${{ env.JAVET_SO_NAME }}" "${{ matrix.download_url }}"
+      #     file "deps/javet/${{ env.JAVET_SO_NAME }}"
 
       - name: 下载 Node.js 头文件
         run: |
