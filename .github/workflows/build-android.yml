@@ -7,10 +7,9 @@ on:
 
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
-  NODE_HEADERS: 24.0.0
+  NODE_HEADERS: 24.15.0          # 改为最新 24.15.0
   ANDROID_NDK_VERSION: r26d
   ANDROID_NDK_HOME: /tmp/android-ndk
-  V8_REF: 14.2.231.21          # 你的 V8 版本
 
 jobs:
   build-android:
@@ -99,15 +98,6 @@ jobs:
         env:
           DOWNLOAD_URL: ${{ matrix.download_url }}
           JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
-
-      # 🔽 重点：下载 V8 头文件 🔽
-      - name: 下载 Javet V8 头文件
-        run: |
-          mkdir -p deps/v8
-          # 请替换为你的实际头文件下载地址
-          curl -fsSL "https://github.com/你的用户名/仓库名/releases/download/v0.1/v8-headers-${V8_REF}.tar.gz" -o v8-headers.tar.gz
-          tar -xzf v8-headers.tar.gz -C deps/v8 --strip-components=1
-          ls -R deps/v8/include   # 验证文件存在
 
       - name: 下载 Node.js 头文件
         run: |
