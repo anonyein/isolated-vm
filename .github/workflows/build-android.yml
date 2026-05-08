@@ -36,10 +36,10 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v5
 
-      - name: 安装系统依赖
+      - name: 安装系统依赖（包含 Boost）
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build curl tar zstd
+          sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
 
       - name: 安装 CMake 4.0.0
         run: |
@@ -118,6 +118,9 @@ jobs:
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT)
           set(ANDROID_STL c++_shared)
+          # 关键：覆盖系统 Boost 搜索路径，确保能找到系统头文件（仅头文件库）
+          set(Boost_INCLUDE_DIR /usr/include)
+          # 如果后续报缺少库文件，再尝试设置 Boost_NO_BOOST_CMAKE
           EOF
 
           export TOOLCHAIN_FILE=./custom.android.toolchain.cmake
