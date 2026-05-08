@@ -1,0 +1,120 @@
+name: Build Android (Javet-linked)
+
+# 触发器：手动触发或在推送到 experimental 分支时触发
+on:
+  workflow_dispatch: # 允许手动触发
+  push:
+    branches: [ experimental ]
+
+env:
+  # Javet SO 文件名
+  JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
+  NODE_HEADERS: 24.0.0 # 用于编译 N-API 扩展的 Node.js 头文件版本
+
+jobs:
+  build-android:
+    name: Build Android (${{ matrix.abi }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            triplet: aarch64-linux-android
+            ndk_api: 24
+            # Javet SO 的 arm64 架构直链
+            download_url: https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c
+          - abi: x86
+            triplet: i686-linux-android
+            ndk_api: 24
+            # Javet SO 的 x86 架构直链
+            download_url: https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7
+
+    env:
+      ANDROID_NDK_VERSION: r27c          # 使用较新的 NDK 版本以获得更好的 C++23 支持
+      ANDROID_NDK_HOME: /tmp/android-ndk
+      TRIPLET: ${{ matrix.triplet }}
+      ABI: ${{ matrix.abi }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      # ---------- 1. 安装构建系统依赖 ----------
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake curl tar zstd
+
+      # ---------- 2. 安装 Node.js 和 pnpm ----------
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v5
+
+      - name: 安装 npm 依赖并编译 TypeScript
+        run: |
+          pnpm install --frozen-lockfile
+          npx tsc -b
+
+      # ---------- 3. 配置 Android NDK ----------
+      - name: 配置 Android NDK
+        run: |
+          mkdir -p $ANDROID_NDK_HOME
+          curl -fsSL https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip -o ndk.zip
+          unzip -q ndk.zip -d /tmp
+          mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+
+      # ---------- 4. 获取 Javet V8 库 ----------
+      - name: 下载 Javet V8 库
+        run: |
+          mkdir -p deps/javet
+          echo "下载地址: ${{ matrix.download_url }}"
+          curl -L -o "deps/javet/${{ env.JAVET_SO_NAME }}" "${{ matrix.download_url }}"
+          # 验证文件是否下载成功
+          file "deps/javet/${{ env.JAVET_SO_NAME }}"
+
+      # ---------- 5. 获取 Node.js 头文件 ----------
+      # 注意：这里假设你的仓库有 nodejs_select 脚本，否则需要替换为直接下载
+      - name: 下载 Node.js 头文件
+        run: bash scripts/nodejs_select "deps/nodejs/${{ env.NODE_HEADERS }}"
+
+      # ---------- 6. CMake 配置 (Android 交叉编译) ----------
+      - name: 配置 CMake
+        shell: bash
+        run: |
+          export TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
+            -DANDROID_STL=c++_shared \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MAKE_PROGRAM=ninja \
+            -DV8_LIBRARY_TYPE=shared \
+            -DV8_INCLUDE_DIR="$PWD/deps/v8/include" \
+            -DV8_SHARED_LIBRARY="$PWD/deps/javet/${{ env.JAVET_SO_NAME }}" \
+            -DV8_LIBRARY_PATH="$PWD/deps/javet" \
+            -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
+            -DIVM_INSTALL=copy \
+            -B build \
+            -G Ninja
+
+      # ---------- 7. 构建 ----------
+      - name: 构建
+        run: ninja -C build backend_napi_v8
+
+      # ---------- 8. 检查产物 ----------
+      - name: 验证产物
+        run: |
+          echo "构建产物信息："
+          ls -lh build/packages/backend_napi_v8/
+          file build/packages/backend_napi_v8/backend_napi_v8.node
+
+      # ---------- 9. 上传构件 ----------
+      - uses: actions/upload-artifact@v6
+        with:
+          name: isolated-vm-android-${{ matrix.abi }}
+          path: build/packages/backend_napi_v8/artifacts
+          if-no-files-found: error
