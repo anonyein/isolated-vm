@@ -64,15 +64,15 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      # 安装 Playwright 包（使 require('playwright') 可用）
+      # 安装 Playwright 包到 workspace 根
       - name: 安装 Playwright
-        run: pnpm add -D playwright
+        run: pnpm add -D -w playwright
 
-      # 下载 Chromium 浏览器
+      # 下载 Playwright 所需的 Chromium 浏览器
       - name: 安装 Playwright 浏览器
         run: npx playwright install chromium
 
-      # 使用 headless 浏览器下载 Javet .so 文件
+      # 使用 headless 浏览器下载 Javet .so
       - name: 下载 Javet SO (headless)
         run: |
           cat > download.cjs << 'SCRIPT_END'
