@@ -8,7 +8,7 @@ on:
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
   NODE_HEADERS: 24.15.0
-  ANDROID_NDK_VERSION: r26d
+  ANDROID_NDK_VERSION: r27c                # 升级到 r27c，Clang 18
   ANDROID_NDK_HOME: /tmp/android-ndk
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
           pnpm install --frozen-lockfile
           npx tsc -b
 
-      - name: 下载并配置 Android NDK
+      - name: 下载并配置 Android NDK (r27c)
         run: |
           mkdir -p $ANDROID_NDK_HOME
           curl -fsSL https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip -o ndk.zip
@@ -153,14 +153,15 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 自定义 Android 工具链
+          # 自定义 Android 工具链（启用模块支持，添加 Boost 路径）
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
+          # 注入宿主 Boost 头文件路径
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers")
+          # 保留 CMake 默认的模块扫描（不设置 CMAKE_CXX_SCAN_FOR_MODULES，即默认 ON）
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -184,13 +185,12 @@ jobs:
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
-            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
             -G Ninja
 
-      - name: 移除不支持的编译参数
+      - name: 移除不支持的编译/扫描参数（兼容旧 NDK 残留）
         shell: bash
         run: |
-          echo "删除 build.ninja 中的不兼容标志..."
+          echo "清理 build.ninja 中可能残留的不兼容标志..."
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
