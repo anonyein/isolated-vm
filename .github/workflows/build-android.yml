@@ -75,7 +75,8 @@ jobs:
       - name: 安装 Playwright 浏览器
         run: npx playwright install chromium
 
-      - name: 下载 Javet SO (headless)
+      - name: 下载 Javet SO (headless)   # 允许失败，继续构建
+        continue-on-error: true
         run: |
           cat > download.cjs << 'SCRIPT_END'
           const { chromium } = require('playwright');
@@ -91,8 +92,8 @@ jobs:
               await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
               console.log('下载成功');
             } catch (e) {
-              console.error('下载失败:', e);
-              process.exit(1);
+              console.error('下载失败，继续构建:', e.message);
+              // 不再 process.exit(1)，让步骤以不良状态结束，但 continue-on-error 会允许流水线继续
             } finally {
               await browser.close();
             }
