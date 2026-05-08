@@ -22,11 +22,11 @@ jobs:
           - abi: arm64-v8a
             triplet: aarch64-linux-android
             ndk_api: 24
-            download_url: "https://ykj-eos-dg5-01.eos-dongguan-6.cmecloud.cn/7a058079c2ff4b53b12ff7c16622b247086?response-content-disposition=attachment%3B%20filename%2A%3DUTF-8%27%27libjavet-node-android-i18n.v.5.0.7.so&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260508T132635Z&X-Amz-SignedHeaders=host&X-Amz-Expires=900&X-Amz-Credential=9T1UKBIX6OJSR5XN2F2T%2F20260508%2Fdefault%2Fs3%2Faws4_request&t=2&u=1040012775810652729&ot=personal&oi=1040012775810652729&f=Fj6biMQ4swk5CeLIVm0dO8JoESSBALNdO&ext=eyJ1dCI6MX0%3D&X-Amz-Signature=61677ebfcdb90120463a489236a9359aa9ac2e8989e5a40ef01d08460c2f997d"
+            download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
           - abi: x86
             triplet: i686-linux-android
             ndk_api: 24
-            download_url: "https://ykj-eos-dg5-01.eos-dongguan-6.cmecloud.cn/5b7c362ac0bc4dffa5ac26c3772e2a62086?response-content-disposition=attachment%3B%20filename%2A%3DUTF-8%27%27libjavet-node-android-i18n.v.5.0.7_20260508_211947.so&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260508T133102Z&X-Amz-SignedHeaders=host&X-Amz-Expires=900&X-Amz-Credential=9T1UKBIX6OJSR5XN2F2T%2F20260508%2Fdefault%2Fs3%2Faws4_request&t=2&u=1040012775810652729&ot=personal&oi=1040012775810652729&f=FlbHSroTtUUiF76zJPg9AUIATeb_K7URI&ext=eyJ1dCI6MX0%3D&X-Amz-Signature=d66a7711bc76daa54fd399f81880be844a9f7775013d53b1a881600b3b0da8b5"
+            download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
 
     env:
       TRIPLET: ${{ matrix.triplet }}
