@@ -1,4 +1,4 @@
-name: Build Android (Javet-linked, headless download)
+name: Build Android (Javet-linked, final)
 
 on:
   workflow_dispatch:
@@ -108,12 +108,14 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
-      - name: 创建缺失的 v8-gn.h
+      - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
         run: touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      - name: 修补项目 CMake 配置（移除 CXX_MODULE_STD，绕过平台检查）
+      - name: 彻底删除 LINKER_TYPE 与 CXX_MODULE_STD
         run: |
-          # 删除所有包含 CXX_MODULE_STD 的行（避免标准库模块依赖）
+          # 删除所有 CMakeLists.txt 中的 LINKER_TYPE 属性设置
+          find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
+          # 删除所有 CMakeLists.txt 中的 CXX_MODULE_STD 属性
           find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
           # 绕过 Android 平台检查
           sed -i '/Unknown host platform/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
@@ -122,7 +124,7 @@ jobs:
       - name: 配置 CMake
         shell: bash
         run: |
-          # 伪造 Boost 配置（提供 Boost::boost 导入目标）
+          # 伪造 Boost 配置
           mkdir -p fake-boost/lib/cmake/Boost
           cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
           add_library(Boost::boost INTERFACE IMPORTED)
@@ -139,14 +141,12 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 自定义 Android 工具链（解决 LLD 错误）
+          # 自定义 Android 工具链（解决 LLD 问题）
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
-          # 强制链接器类型为 DEFAULT，避免 CMake 4.0 的 LLD 探测失败
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
-          # 如果在子目录中也出现 LINKER_TYPE 错误，可以再强制设置 CMAKE_LINKER
-          set(CMAKE_LINKER "${ANDROID_TOOLCHAIN_ROOT}/bin/ld.lld" CACHE FILEPATH "" FORCE)
+          set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -167,7 +167,6 @@ jobs:
             -DV8_LIBRARY_TYPE=shared \
             -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
             -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
-            -DV8_SHARED_LIBRARY="${PWD}/deps/javet/${{ env.JAVET_SO_NAME }}" \
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
