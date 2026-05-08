@@ -108,10 +108,16 @@ jobs:
             curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
           fi
 
+      - name: 准备 V8 头文件 (通过 Node.js 头文件提供)
+        run: |
+          mkdir -p deps/v8/include
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/include/node/* deps/v8/include/
+          ls deps/v8/include/v8.h  # 确认存在
+
       - name: 配置 CMake
         shell: bash
         run: |
-          # ----- 伪造 Boost 安装目录，提供 BoostConfig.cmake -----
+          # 伪造 BoostConfig
           mkdir -p fake-boost/lib/cmake/Boost
           cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'EOF'
           message(STATUS "Using fake BoostConfig (header-only)")
@@ -125,18 +131,16 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           EOF
 
-          # ----- 自定义 Android 工具链 -----
+          # 自定义工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT)
           set(ANDROID_STL c++_shared)
           NDK_EOF
 
-          # 获取 auto_js 模块路径（仍需要以找到 FindNpmPackage 等）
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
           echo "Auto JS module path: ${AUTO_JS_PATH}"
 
-          # 配置 CMake
           cmake \
             -S "${PWD}" \
             -B "${PWD}/build" \
