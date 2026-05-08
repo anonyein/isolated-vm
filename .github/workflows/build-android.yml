@@ -10,6 +10,7 @@ env:
   NODE_HEADERS: 24.0.0
   ANDROID_NDK_VERSION: r26d
   ANDROID_NDK_HOME: /tmp/android-ndk
+  V8_REF: 14.2.231.21          # 你的 V8 版本
 
 jobs:
   build-android:
@@ -23,8 +24,8 @@ jobs:
             triplet: aarch64-linux-android
             ndk_api: 24
             download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
-          - abi: x86_64                          # 改为 64 位
-            triplet: x86_64-linux-android        # 对应的三元组
+          - abi: x86_64
+            triplet: x86_64-linux-android
             ndk_api: 24
             download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
 
@@ -99,6 +100,15 @@ jobs:
           DOWNLOAD_URL: ${{ matrix.download_url }}
           JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
 
+      # 🔽 重点：下载 V8 头文件 🔽
+      - name: 下载 Javet V8 头文件
+        run: |
+          mkdir -p deps/v8
+          # 请替换为你的实际头文件下载地址
+          curl -fsSL "https://github.com/你的用户名/仓库名/releases/download/v0.1/v8-headers-${V8_REF}.tar.gz" -o v8-headers.tar.gz
+          tar -xzf v8-headers.tar.gz -C deps/v8 --strip-components=1
+          ls -R deps/v8/include   # 验证文件存在
+
       - name: 下载 Node.js 头文件
         run: |
           if [ -f scripts/nodejs_select ]; then
@@ -117,14 +127,6 @@ jobs:
           set(ANDROID_STL c++_shared)
           EOF
 
-          # 动态定位系统 Boost 的 CMake 配置目录
-          BOOST_DIR=$(find /usr/lib -maxdepth 4 -type d -name "Boost-*" -print -quit)
-          if [ -z "$BOOST_DIR" ]; then
-            echo "警告：未找到系统 Boost 配置目录，使用默认路径。"
-            BOOST_DIR="/usr/lib/x86_64-linux-gnu/cmake/Boost-1.83.0"
-          fi
-          echo "使用 Boost 配置目录：$BOOST_DIR"
-
           export TOOLCHAIN_FILE=./custom.android.toolchain.cmake
           cmake \
             -DCMAKE_MODULE_PATH=$(npm exec auto_js_cmake_include) \
@@ -134,8 +136,8 @@ jobs:
             -DANDROID_STL=c++_shared \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
-            -DBoost_DIR="$BOOST_DIR" \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
+            -DBoost_NO_BOOST_CMAKE=ON \
+            -DBoost_INCLUDE_DIR=/usr/include \
             -DV8_LIBRARY_TYPE=shared \
             -DV8_INCLUDE_DIR="$PWD/deps/v8/include" \
             -DV8_SHARED_LIBRARY="$PWD/deps/javet/${{ env.JAVET_SO_NAME }}" \
