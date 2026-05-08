@@ -41,9 +41,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
 
-      - name: 安装 CMake 4.0.0
+      - name: 安装 CMake 3.28.6
         run: |
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.sh -o cmake.sh
           sudo bash cmake.sh --prefix=/usr/local --skip-license
           cmake --version
 
@@ -111,16 +111,26 @@ jobs:
       - name: 创建缺失的 v8-gn.h
         run: touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      - name: 绕过 Android 平台检查
+      - name: 修补项目 CMake 配置
         run: |
+          # 降低 CMake 最低版本要求
+          sed -i 's/cmake_minimum_required(VERSION 4.0)/cmake_minimum_required(VERSION 3.28)/' CMakeLists.txt
+          # 移除 CXX_MODULE_STD 属性（避免模块依赖）
+          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
+          # 绕过 Android 平台检查
           sed -i '/Unknown host platform/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
           sed -i '/Unsupported API/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
 
       - name: 配置 CMake
         shell: bash
         run: |
+          # 伪造 Boost 配置（包含 Boost::boost 目标）
           mkdir -p fake-boost/lib/cmake/Boost
           cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
+          add_library(Boost::boost INTERFACE IMPORTED)
+          set_target_properties(Boost::boost PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
+          )
           set(Boost_FOUND TRUE)
           set(Boost_INCLUDE_DIRS /usr/include)
           set(Boost_LIBRARIES "")
@@ -131,6 +141,7 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
+          # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT)
