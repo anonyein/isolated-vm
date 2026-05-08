@@ -110,18 +110,14 @@ jobs:
 
       - name: 将 Node 头文件复制到各子包预期位置
         run: |
-          # 给 packages/third_party/nodejs
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
-          # 给 packages/third_party/v8
           mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
 
       - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
         run: |
-          # 根目录下的 deps
           touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
-          # 子包中同样补上（其实 cp 已经带过去了，此处为双重保险）
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
@@ -152,14 +148,16 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 自定义 Android 工具链（解决 LLD 问题）
+          # 自定义 Android 工具链（解决 LLD、模块扫描、宿主 Boost 路径）
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 强制关闭 C++20 模块扫描，防止 CMake 4.0 自动启用
+          # 强制关闭 C++20 模块扫描
           set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
+          # 允许使用宿主系统的 Boost 头文件（header-only）
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /usr/include")
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
