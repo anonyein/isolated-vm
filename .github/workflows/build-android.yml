@@ -163,7 +163,7 @@ jobs:
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
 
-          # 尝试关闭模块扫描（但其可能会被目标覆盖，我们最后用 sed 强制清理）
+          # 尝试关闭模块扫描（可能会被目标覆盖，最终用 sed 修正）
           set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
           NDK_EOF
 
@@ -190,28 +190,24 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复编译参数（清理不兼容标志并注入必需路径）
+      - name: 修复编译参数（清理不兼容标志，注入必需参数，启用隐式模块）
         shell: bash
         run: |
           echo "修复 build.ninja 中的编译命令..."
 
-          # 1. 删除所有不兼容的标志
+          # 1. 删除不兼容的标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-          # 2. 构建要注入的额外编译/扫描参数
+          # 2. 启用隐式模块（覆盖 CMake 可能添加的 -fno-implicit-modules）
+          find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
+
+          # 3. 构建要注入的额外标志（包含 -fimplicit-modules 以强制启用）
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
-          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache"
+          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache -fimplicit-modules"
 
-          # 如果存在标准库模块映射，显式添加
-          MODULE_MAP=$(find /tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1 -name module.modulemap -print -quit)
-          if [ -n "$MODULE_MAP" ]; then
-            echo "使用标准库模块映射: $MODULE_MAP"
-            EXTRA_FLAGS="$EXTRA_FLAGS -fmodule-map-file=$MODULE_MAP"
-          fi
-
-          # 将所有 clang++ 调用的前面插入额外标志（只插入到命令行的 clang++ 之后）
+          # 4. 注入到所有 clang++ 调用中
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
 
           echo "修复完成"
