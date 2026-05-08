@@ -75,7 +75,7 @@ jobs:
       - name: 安装 Playwright 浏览器
         run: npx playwright install chromium
 
-      - name: 下载 Javet SO (headless)   # 允许失败，继续构建
+      - name: 下载 Javet SO (headless)
         continue-on-error: true
         run: |
           cat > download.cjs << 'SCRIPT_END'
@@ -93,7 +93,6 @@ jobs:
               console.log('下载成功');
             } catch (e) {
               console.error('下载失败，继续构建:', e.message);
-              // 不再 process.exit(1)，让步骤以不良状态结束，但 continue-on-error 会允许流水线继续
             } finally {
               await browser.close();
             }
@@ -154,15 +153,13 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 自定义 Android 工具链（解决 LLD、模块扫描、宿主 Boost 路径）
+          # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 强制关闭 C++20 模块扫描
           set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
-          # 只添加独立的 Boost 头文件，避免宿主系统的 glibc 冲突
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers")
           NDK_EOF
 
@@ -190,11 +187,13 @@ jobs:
             -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
             -G Ninja
 
-      - name: 移除不支持的 scan-deps 参数
+      - name: 移除不支持的编译参数
         shell: bash
         run: |
-          echo "删除 build.ninja 中的 -fno-modules-reduced-bmi..."
+          echo "删除 build.ninja 中的不兼容标志..."
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
           echo "清理完成"
 
       - name: 构建
