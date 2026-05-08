@@ -41,9 +41,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
 
-      - name: 安装 CMake 3.28.6
+      - name: 安装 CMake 4.0.0
         run: |
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.sh -o cmake.sh
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
           sudo bash cmake.sh --prefix=/usr/local --skip-license
           cmake --version
 
@@ -111,11 +111,9 @@ jobs:
       - name: 创建缺失的 v8-gn.h
         run: touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      - name: 修补项目 CMake 配置
+      - name: 修补项目 CMake 配置（移除 CXX_MODULE_STD，绕过平台检查）
         run: |
-          # 降低 CMake 最低版本要求
-          sed -i 's/cmake_minimum_required(VERSION 4.0)/cmake_minimum_required(VERSION 3.28)/' CMakeLists.txt
-          # 移除 CXX_MODULE_STD 属性（避免模块依赖）
+          # 删除所有包含 CXX_MODULE_STD 的行（避免标准库模块依赖）
           find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
           # 绕过 Android 平台检查
           sed -i '/Unknown host platform/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
@@ -124,7 +122,7 @@ jobs:
       - name: 配置 CMake
         shell: bash
         run: |
-          # 伪造 Boost 配置（包含 Boost::boost 目标）
+          # 伪造 Boost 配置（提供 Boost::boost 导入目标）
           mkdir -p fake-boost/lib/cmake/Boost
           cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
           add_library(Boost::boost INTERFACE IMPORTED)
@@ -141,11 +139,14 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 自定义 Android 工具链
+          # 自定义 Android 工具链（解决 LLD 错误）
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
-          set(CMAKE_LINKER_TYPE DEFAULT)
+          # 强制链接器类型为 DEFAULT，避免 CMake 4.0 的 LLD 探测失败
+          set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
+          # 如果在子目录中也出现 LINKER_TYPE 错误，可以再强制设置 CMAKE_LINKER
+          set(CMAKE_LINKER "${ANDROID_TOOLCHAIN_ROOT}/bin/ld.lld" CACHE FILEPATH "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
