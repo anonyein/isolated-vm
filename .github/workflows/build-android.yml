@@ -153,8 +153,9 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          # 创建模块缓存目录
-          mkdir -p "${PWD}/build/module_cache"
+          # 创建模块缓存目录并导出环境变量
+          export MODULE_CACHE_PATH="${PWD}/build/module_cache"
+          mkdir -p "${MODULE_CACHE_PATH}"
 
           # 自定义 Android 工具链
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
@@ -162,6 +163,12 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
+
+          # 关键：关闭模块依赖扫描，让编译器在编译时自行生成和发现模块
+          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
+
+          # 注入 Boost 头文件路径和模块支持标志（一次性设置，避免覆盖）
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=$ENV{MODULE_CACHE_PATH}" CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -186,32 +193,6 @@ jobs:
             -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
             -DIVM_INSTALL=copy \
             -G Ninja
-
-      - name: 修复编译参数（注入必需标志，删除不兼容选项）
-        shell: bash
-        run: |
-          echo "修复 build.ninja 中的编译和扫描参数..."
-
-          # 1. 删除不兼容标志
-          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-
-          # 2. 构建附加标志
-          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
-          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${PWD}/build/module_cache"
-
-          # 如果 NDK 提供标准库模块映射，则显式使用
-          MODULE_MAP=$(find /tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1 -name module.modulemap -print -quit)
-          if [ -n "$MODULE_MAP" ]; then
-            echo "发现标准库模块映射: $MODULE_MAP"
-            EXTRA_FLAGS="$EXTRA_FLAGS -fmodule-map-file=$MODULE_MAP"
-          fi
-
-          # 将所有 clang++ 调用的前面插入附加标志
-          find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
-
-          echo "修复完成"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
