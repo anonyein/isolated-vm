@@ -113,11 +113,8 @@ jobs:
 
       - name: 彻底删除 LINKER_TYPE 与 CXX_MODULE_STD
         run: |
-          # 删除所有 CMakeLists.txt 中的 LINKER_TYPE 属性设置
           find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
-          # 删除所有 CMakeLists.txt 中的 CXX_MODULE_STD 属性
           find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
-          # 绕过 Android 平台检查
           sed -i '/Unknown host platform/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
           sed -i '/Unsupported API/s/^/#/' packages/backend_napi_v8/CMakeLists.txt
 
@@ -147,6 +144,8 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
+          # 强制关闭 C++20 模块扫描（避免 NDK 工具链再次打开）
+          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -172,6 +171,13 @@ jobs:
             -DIVM_INSTALL=copy \
             -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
             -G Ninja
+
+      - name: 移除不支持的 scan-deps 参数
+        shell: bash
+        run: |
+          echo "删除 build.ninja 中的 -fno-modules-reduced-bmi..."
+          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
+          echo "清理完成"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
