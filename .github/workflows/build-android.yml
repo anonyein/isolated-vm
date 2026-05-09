@@ -254,8 +254,11 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 3. 在每个 .cc 文件中，找到 `module;` 并在其下方插入 #include <bits/stdc++.h>
+          # 3. 插入 #include <bits/stdc++.h>
+          # 对于包含 `module;` 的文件，在该行下方插入
           find packages -name '*.cc' -exec sed -i '/^module;$/a\#include <bits/stdc++.h>' {} \;
+          # 对于不包含 `module;` 的文件，在第一行上方插入
+          find packages -name '*.cc' -exec grep -L '^module;$' {} \; | xargs sed -i '1i\#include <bits/stdc++.h>'
 
           # 4. 清理 build.ninja 中的不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
