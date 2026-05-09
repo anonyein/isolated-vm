@@ -191,10 +191,7 @@ jobs:
         shell: bash
         run: |
           echo "修复源码: 强制修正所有 module 文件的前两行..."
-          # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-
-          # 创建 bits/stdc++.h
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -252,19 +249,12 @@ jobs:
           #include <bit>
           #include <version>
           STD_HEADER
-
-          # 修正 elide.cc 语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-
-          # 强制修正所有包含 'module util' 的文件：确保前两行是 module; 和 #include
           for f in $(grep -rl 'module util' packages/); do
-            # 移除之前可能存在的错误插入
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
-            # 在第一行插入 module;
             sed -i '1i\module;' "$f"
-            # 在第二行插入 #include <bits/stdc++.h>
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
@@ -274,7 +264,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整拓扑排序编译 utility 模块（修正 type_traits 顺序）
+      - name: 完整编译 utility 模块（自动展开聚合分区子模块）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -295,7 +285,15 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          compiled = {}
+          # 聚合分区定义（分区名 -> 子分区列表）
+          AGGREGATES = {
+              "type_traits": ["type_traits.function_traits", "type_traits.transform", "type_traits.type_of", "type_traits.type_pack"],
+              "utility": ["utility.constant_wrapper", "utility.covariant_value", "utility.facade", "utility.hash", "utility.ranges", "utility.string"],
+              "memory": ["memory.autorelease_pool", "memory.comparator", "memory.noinit_allocator"],
+              "functional": ["functional.bind", "functional.elide", "functional.function_constant", "functional.function_ref", "functional.regular_return"],
+          }
+
+          compiled = {}  # 分区名 -> .pcm 路径
 
           def cc(rel, part=None, deps=None):
               src = os.path.join(UTIL_DIR, rel)
@@ -306,6 +304,11 @@ jobs:
               for d in (deps or []):
                   if d in compiled:
                       extra.append(f"-fmodule-file=util:{d}={compiled[d]}")
+                  # 若依赖是聚合分区，自动追加其所有子分区
+                  if d in AGGREGATES:
+                      for sub in AGGREGATES[d]:
+                          if sub in compiled:
+                              extra.append(f"-fmodule-file=util:{sub}={compiled[sub]}")
 
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -338,37 +341,33 @@ jobs:
           cc("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
           cc("utility/string.cc", "utility.string", ["utility.constant_wrapper"])
 
-          # ==================== Tier 2: 聚合分区 type_traits (因为 function_ref 依赖它) ====================
-          type_traits_subs = ["type_traits.function_traits", "type_traits.transform", "type_traits.type_of", "type_traits.type_pack"]
-          cc("type_traits/type_traits.cc", "type_traits", type_traits_subs)
+          # ==================== Tier 2: 聚合分区 type_traits ====================
+          cc("type_traits/type_traits.cc", "type_traits", AGGREGATES["type_traits"])
 
           # ==================== Tier 3: functional 子分区 (依赖 type_traits) ====================
           cc("functional/function_ref.cc", "functional.function_ref", ["functional.elide", "type_traits"])
           cc("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
           cc("functional/regular_return.cc", "functional.regular_return", ["utility"])
           cc("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
-
-          # ==================== Tier 4: 其他聚合分区 ====================
           cc("memory/autorelease_pool.cc", "memory.autorelease_pool", ["memory.comparator", "utility"])
           cc("utility/covariant_value.cc", "utility.covariant_value", ["type_traits", "utility.facade"])
-          cc("container/sealed_map.cc", "container.sealed_map", ["functional"])  # 后面修正依赖
 
-          # utility 聚合分区
-          utility_subs = ["utility.constant_wrapper", "utility.covariant_value", "utility.facade", "utility.hash", "utility.ranges", "utility.string"]
-          cc("utility/utility.cc", "utility", utility_subs)
-
-          # memory 聚合分区
-          memory_subs = ["memory.autorelease_pool", "memory.comparator", "memory.noinit_allocator"]
-          cc("memory/memory.cc", "memory", memory_subs)
-
-          # functional 聚合分区
-          functional_subs = ["functional.bind", "functional.elide", "functional.function_constant", "functional.function_ref", "functional.regular_return"]
-          cc("functional/functional.cc", "functional", functional_subs)
+          # ==================== Tier 4: 其他聚合分区 ====================
+          cc("utility/utility.cc", "utility", AGGREGATES["utility"])
+          cc("memory/memory.cc", "memory", AGGREGATES["memory"])
+          cc("functional/functional.cc", "functional", AGGREGATES["functional"])
 
           # ==================== Tier 5: 依赖聚合分区的分区 ====================
-          cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable", "platform.timer"])
-          cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
+          cc("container/sealed_map.cc", "container.sealed_map", [
+              "utility", "functional", "type_traits", "utility.string", "functional.elide",
+              "utility.constant_wrapper", "utility.ranges", "type_traits.function_traits",
+              "type_traits.transform", "utility.facade", "functional.flat_tuple",
+              "functional.function_ref", "type_traits.type_of", "functional.function_constant",
+              "type_traits.type_pack", "utility.covariant_value", "utility.hash"
+          ])
           cc("platform/lockable.cc", "platform.lockable", ["utility"])
+          cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable"])
+          cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
 
           # ==================== Tier 6: 主模块 _module.cc ====================
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
