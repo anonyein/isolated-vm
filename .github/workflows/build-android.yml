@@ -187,13 +187,14 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（import std 替换、elide.cc 修复）
+      - name: 修复源码（强制修正所有模块文件）
         shell: bash
         run: |
-          echo "修复源码..."
-          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
-          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+          echo "修复源码: 强制修正所有 module 文件的前两行..."
+          # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+
+          # 创建 bits/stdc++.h
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -251,15 +252,21 @@ jobs:
           #include <bit>
           #include <version>
           STD_HEADER
-          find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
-          for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
-            if ! grep -q '^module;$' "$f"; then
-              sed -i '1i\module;' "$f"
-              sed -i '2i\#include <bits/stdc++.h>' "$f"
-            fi
+
+          # 修正 elide.cc 语法
+          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+
+          # 强制修正所有包含 'module util' 的文件：确保前两行是 module; 和 #include
+          for f in $(grep -rl 'module util' packages/); do
+            # 移除之前可能存在的错误插入
+            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
+            sed -i '/^module;$/d' "$f"
+            # 在第一行插入 module;
+            sed -i '1i\module;' "$f"
+            # 在第二行插入 #include <bits/stdc++.h>
+            sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
-          find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
-          find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
 
       - name: 清理 ninja 中的不兼容标志
         run: |
@@ -267,7 +274,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 硬编码顺序编译 utility 模块（分析源码后的精确依赖）
+      - name: 精确顺序编译 utility 模块（已分析依赖）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -292,8 +299,7 @@ jobs:
 
           def compile_part(rel_path, part_name=None, deps=None):
               src = os.path.join(UTIL_DIR, rel_path)
-              if deps is None:
-                  deps = []
+              deps = deps or []
               pcm_path = os.path.join(PCM_DIR, f"util-{part_name}.pcm") if part_name else None
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
@@ -312,20 +318,17 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd_obj, check=True)
 
-          # === Tier 0: 最底层的叶子分区（无内部模块依赖） ===
+          # === Tier 0: 无内部模块依赖的叶子分区 ===
           compile_part("type_traits/transform.cc", "type_traits.transform")
           compile_part("type_traits/type_of.cc", "type_traits.type_of")
           compile_part("functional/elide.cc", "functional.elide")
           compile_part("functional/flat_tuple.cc", "functional.flat_tuple")
-          compile_part("platform/timer.cc", "platform.timer")
           compile_part("memory/memory.cc", "memory")
           compile_part("memory/comparator.cc", "memory.comparator")
           compile_part("memory/noinit_allocator.cc", "memory.noinit_allocator")
           compile_part("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
           compile_part("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
           compile_part("container/tinker_queue.cc", "container.tinker_queue")
-
-          # === Tier 0.5: utility 的子分区（不依赖 utility 聚合分区） ===
           compile_part("utility/constant_wrapper.cc", "utility.constant_wrapper")
           compile_part("utility/ranges.cc", "utility.ranges")
           compile_part("utility/hash.cc", "utility.hash")
@@ -333,7 +336,7 @@ jobs:
           compile_part("utility/string.cc", "utility.string")
           compile_part("utility/covariant_value.cc", "utility.covariant_value", ["utility.facade"])
 
-          # === Tier 1: utility 聚合分区（有了所有子分区 PCM） ===
+          # === Tier 1: 聚合分区 utility ===
           compile_part("utility/utility.cc", "utility", [
               "utility.constant_wrapper", "utility.covariant_value",
               "utility.facade", "utility.hash", "utility.ranges",
@@ -348,11 +351,10 @@ jobs:
               "type_traits.type_of", "type_traits.type_pack",
               "type_traits.function_traits", "type_traits.transform"
           ])
-
-          # === Tier 1.6: functional 子分区 ===
           compile_part("functional/function_ref.cc", "functional.function_ref", ["functional.elide"])
           compile_part("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
           compile_part("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
+          compile_part("platform/lockable.cc", "platform.lockable", ["utility"])
 
           # === Tier 2: 聚合分区 functional ===
           functional_subs = [
@@ -362,7 +364,8 @@ jobs:
           ]
           compile_part("functional/functional.cc", "functional", functional_subs)
 
-          # === Tier 3: 依赖 functional 聚合分区的 ===
+          # === Tier 3: 依赖 functional 的分区 ===
+          compile_part("platform/timer.cc", "platform.timer", ["functional"])
           compile_part("container/sealed_map.cc", "container.sealed_map", [
               "utility.string", "functional.elide", "utility.constant_wrapper",
               "utility.ranges", "type_traits.function_traits", "type_traits.transform",
@@ -375,7 +378,6 @@ jobs:
               "functional", "functional.elide", "functional.function_constant",
               "functional.function_ref"
           ])
-          compile_part("platform/lockable.cc", "platform.lockable", ["utility"])
 
           # === Tier 4: 主模块 _module.cc ===
           primary_src = os.path.join(UTIL_DIR, "_module.cc")
