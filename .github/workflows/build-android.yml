@@ -199,10 +199,9 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 动态生成 bits/stdc++.h，使用 __has_include 保证兼容性
+          # 2. 创建 bits/stdc++.h（不含 stop_token / source_location）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
-
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
           #include <cstdlib>
           #include <cstdint>
@@ -252,7 +251,10 @@ jobs:
           #include <ranges>
           #include <bit>
           #include <version>
+          STD_HEADER
 
+          # 3. 创建 stub.h 提供 stop_token / source_location 缺失定义
+          cat > /tmp/stub.h << 'STUB_HEADER'
           #if __has_include(<stop_token>)
           #include <stop_token>
           #else
@@ -279,12 +281,12 @@ jobs:
               };
           }
           #endif
-          STD_HEADER
+          STUB_HEADER
 
-          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
+          # 4. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
-          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
+          # 5. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
           for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
             if ! grep -q '^module;$' "$f"; then
               sed -i '1i\module;' "$f"
@@ -292,13 +294,13 @@ jobs:
             fi
           done
 
-          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
+          # 6. 为原本就包含 module; 的文件，在 module; 之后插入 #include
           find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
 
-          # 6. 对于既无 module; 也无 export module 的文件（普通源文件），在开头插入 #include
+          # 7. 对于既无 module; 也无 export module 的文件（普通源文件），在开头插入 #include
           find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
 
-          # 7. 清理 build.ninja 中的不兼容标志
+          # 8. 清理 build.ninja 中的不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
@@ -307,9 +309,9 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 8. 注入 Boost 头文件路径到所有 clang++ 命令
+          # 9. 注入 Boost 头文件路径 和 stub 头文件到所有 clang++ 命令
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
-          EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
+          EXTRA_FLAGS="-isystem /tmp/host-boost-headers -include /tmp/stub.h"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
 
           echo "修复完成"
