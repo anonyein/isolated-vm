@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（强制修正所有模块文件）
+      - name: 修复源码（强制修正所有模块文件并补全缺失 import）
         shell: bash
         run: |
           echo "修复源码: 强制修正所有 module 文件的前两行..."
@@ -258,6 +258,13 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
+          # 补全缺失的 import，使符号可见
+          for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
+            if ! grep -q 'import :type_traits.transform;' "$file"; then
+              sed -i '/^#include <bits\/stdc++.h>$/ a\import :type_traits.transform;' "$file"
+            fi
+          done
+
       - name: 清理 ninja 中的不兼容标志
         run: |
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
@@ -285,7 +292,6 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          # 聚合分区定义（分区名 -> 子分区列表）
           AGGREGATES = {
               "type_traits": ["type_traits.function_traits", "type_traits.transform", "type_traits.type_of", "type_traits.type_pack"],
               "utility": ["utility.constant_wrapper", "utility.covariant_value", "utility.facade", "utility.hash", "utility.ranges", "utility.string"],
@@ -300,7 +306,7 @@ jobs:
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
-              # 收集所有已编译聚合分区的子分区 PCM，确保间接依赖可见
+              # 全局注入所有已编译聚合分区及其子分区，确保间接依赖可见
               extra = []
               for agg_name, subs in AGGREGATES.items():
                   if agg_name in compiled:
@@ -308,11 +314,6 @@ jobs:
                       for sub in subs:
                           if sub in compiled:
                               extra.append(f"-fmodule-file=util:{sub}={compiled[sub]}")
-
-              # 再加上直接依赖的 PCM（可能已经包含，但无害）
-              for d in (deps or []):
-                  if d in compiled and f"-fmodule-file=util:{d}={compiled[d]}" not in extra:
-                      extra.append(f"-fmodule-file=util:{d}={compiled[d]}")
 
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -324,7 +325,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # ==================== Tier 0: 叶子分区 ====================
+          # 编译顺序 (与之前相同，已调整 utility.covariant_value 等)
           cc("type_traits/transform.cc", "type_traits.transform")
           cc("type_traits/type_of.cc", "type_traits.type_of")
           cc("functional/elide.cc", "functional.elide")
@@ -340,36 +341,24 @@ jobs:
           cc("utility/ranges.cc", "utility.ranges")
           cc("platform/timer.h.cc", "platform.timer")
 
-          # ==================== Tier 1: 依赖叶子分区 ====================
           cc("type_traits/type_pack.cc", "type_traits.type_pack", ["type_traits.type_of"])
           cc("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
           cc("utility/string.cc", "utility.string", ["utility.constant_wrapper"])
 
-          # ==================== Tier 2: 聚合分区 type_traits ====================
           cc("type_traits/type_traits.cc", "type_traits", AGGREGATES["type_traits"])
-
-          # ==================== Tier 2.5: utility.covariant_value (依赖 type_traits + utility.facade) ====================
           cc("utility/covariant_value.cc", "utility.covariant_value", ["type_traits", "utility.facade"])
-
-          # ==================== Tier 3: 聚合分区 utility ====================
           cc("utility/utility.cc", "utility", AGGREGATES["utility"])
 
-          # ==================== Tier 4: memory 子分区（依赖 utility） ====================
           cc("memory/autorelease_pool.cc", "memory.autorelease_pool", ["memory.comparator", "utility"])
-
-          # ==================== Tier 5: 聚合分区 memory ====================
           cc("memory/memory.cc", "memory", AGGREGATES["memory"])
 
-          # ==================== Tier 6: functional 子分区（依赖 utility, type_traits） ====================
           cc("functional/function_ref.cc", "functional.function_ref", ["functional.elide", "type_traits"])
           cc("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
           cc("functional/regular_return.cc", "functional.regular_return", ["utility"])
           cc("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
 
-          # ==================== Tier 7: 聚合分区 functional ====================
           cc("functional/functional.cc", "functional", AGGREGATES["functional"])
 
-          # ==================== Tier 8: 依赖聚合分区的分区 ====================
           cc("platform/lockable.cc", "platform.lockable", ["utility"])
           cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable"])
           cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
@@ -381,7 +370,6 @@ jobs:
               "type_traits.type_pack", "utility.covariant_value", "utility.hash"
           ])
 
-          # ==================== Tier 9: 主模块 _module.cc ====================
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
           for pname, ppath in compiled.items():
