@@ -9,10 +9,10 @@ set_policy("build.c++.modules", true)
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
--- 获取工作区根目录（GitHub Actions 环境变量）
+-- 获取工作区根目录
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
--- 全局头文件路径（使用绝对路径避免相对路径解析问题）
+-- 头文件路径（全局 + 编译标志双保险）
 add_includedirs(path.join(workspace, "packages/utility/include"))
 add_includedirs("/tmp/host-boost-headers")
 add_includedirs(path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0/include/node"))
@@ -20,6 +20,13 @@ add_includedirs(path.join(workspace, "packages/third_party/v8/deps/nodejs/24.15.
 add_includedirs(path.join(workspace, "packages/third_party/v8"))
 add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
 add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
+
+-- 通过编译标志强制传递，确保模块扫描器可见
+add_cxxflags("-I" .. path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0/include/node"))
+add_cxxflags("-I" .. path.join(workspace, "packages/third_party/v8/deps/nodejs/24.15.0/include/node"))
+add_cxxflags("-I" .. path.join(workspace, "packages/third_party/v8"))
+add_cxxflags("-I" .. path.join(workspace, "packages/auto_js/napi/include"))
+add_cxxflags("-I" .. path.join(workspace, "packages/utility/include"))
 
 add_linkdirs("deps/javet")
 
@@ -88,10 +95,11 @@ target("backend_napi_v8")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8", "napi_js", "v8_js", "isolated_vm")
     add_files("packages/backend_napi_v8/**.cc")
     exclude_tests()
-    -- 显式添加所有关键包含路径，确保模块扫描可用
+    -- 显式包含路径（即使全局已添加，此处再加强）
     add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
     add_includedirs(path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0/include/node"))
     add_includedirs(path.join(workspace, "packages/third_party/v8/deps/nodejs/24.15.0/include/node"))
+    add_cxxflags("-I" .. path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0/include/node"))
     add_links("javet-node-android-i18n")
     if is_plat("android") then
         add_links("uv", "android", "log", "EGL", "GLESv2", "OpenSLES")
