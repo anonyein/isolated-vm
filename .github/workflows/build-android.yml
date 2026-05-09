@@ -192,10 +192,10 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码与编译参数（正确处理 import std 位置）
+      - name: 修复源码与编译参数（正确处理模块结构）
         shell: bash
         run: |
-          echo "修复源码中的 import std 和 build.ninja 编译参数..."
+          echo "修复源码中的 import std 和模块结构..."
 
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
@@ -254,13 +254,24 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 3. 插入 #include <bits/stdc++.h>
-          # 对于包含 `module;` 的文件，在该行下方插入
-          find packages -name '*.cc' -exec sed -i '/^module;$/a\#include <bits/stdc++.h>' {} \;
-          # 对于不包含 `module;` 的文件，在第一行上方插入
-          find packages -name '*.cc' -exec grep -L '^module;$' {} \; | xargs sed -i '1i\#include <bits/stdc++.h>'
+          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
+          find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
-          # 4. 清理 build.ninja 中的不兼容标志
+          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
+          for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
+            if ! grep -q '^module;$' "$f"; then
+              sed -i '1i\module;' "$f"
+              sed -i '2i\#include <bits/stdc++.h>' "$f"
+            fi
+          done
+
+          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
+          find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
+
+          # 6. 对于既无 module; 也无 export module 的文件（普通源文件），在开头插入 #include
+          find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
+
+          # 7. 清理 build.ninja 中的不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
@@ -269,7 +280,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 5. 注入 Boost 头文件路径到所有 clang++ 命令
+          # 8. 注入 Boost 头文件路径到所有 clang++ 命令
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
