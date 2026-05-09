@@ -264,7 +264,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（调整 utility.covariant_value 顺序）
+      - name: 完整编译 utility 模块（全局传递所有已编译聚合分区子模块）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -300,14 +300,19 @@ jobs:
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
+              # 收集所有已编译聚合分区的子分区 PCM，确保间接依赖可见
               extra = []
-              for d in (deps or []):
-                  if d in compiled:
-                      extra.append(f"-fmodule-file=util:{d}={compiled[d]}")
-                  if d in AGGREGATES:
-                      for sub in AGGREGATES[d]:
+              for agg_name, subs in AGGREGATES.items():
+                  if agg_name in compiled:
+                      extra.append(f"-fmodule-file=util:{agg_name}={compiled[agg_name]}")
+                      for sub in subs:
                           if sub in compiled:
                               extra.append(f"-fmodule-file=util:{sub}={compiled[sub]}")
+
+              # 再加上直接依赖的 PCM（可能已经包含，但无害）
+              for d in (deps or []):
+                  if d in compiled and f"-fmodule-file=util:{d}={compiled[d]}" not in extra:
+                      extra.append(f"-fmodule-file=util:{d}={compiled[d]}")
 
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -343,7 +348,7 @@ jobs:
           # ==================== Tier 2: 聚合分区 type_traits ====================
           cc("type_traits/type_traits.cc", "type_traits", AGGREGATES["type_traits"])
 
-          # ==================== Tier 2.5: utility.covariant_value (依赖 type_traits + utility.facade) 必须在 utility 之前 ====================
+          # ==================== Tier 2.5: utility.covariant_value (依赖 type_traits + utility.facade) ====================
           cc("utility/covariant_value.cc", "utility.covariant_value", ["type_traits", "utility.facade"])
 
           # ==================== Tier 3: 聚合分区 utility ====================
