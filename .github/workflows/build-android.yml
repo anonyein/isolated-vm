@@ -258,7 +258,7 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 补全缺失的 import，使符号可见
+          # 补全缺失的 import
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             if ! grep -q 'import :type_traits.transform;' "$file"; then
               sed -i '/^#include <bits\/stdc++.h>$/ a\import :type_traits.transform;' "$file"
@@ -271,7 +271,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（全局传递所有已编译聚合分区子模块）
+      - name: 完整编译 utility 模块（全量传递所有已编译 PCM）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -292,28 +292,17 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          AGGREGATES = {
-              "type_traits": ["type_traits.function_traits", "type_traits.transform", "type_traits.type_of", "type_traits.type_pack"],
-              "utility": ["utility.constant_wrapper", "utility.covariant_value", "utility.facade", "utility.hash", "utility.ranges", "utility.string"],
-              "memory": ["memory.autorelease_pool", "memory.comparator", "memory.noinit_allocator"],
-              "functional": ["functional.bind", "functional.elide", "functional.function_constant", "functional.function_ref", "functional.regular_return"],
-          }
-
           compiled = {}
 
-          def cc(rel, part=None, deps=None):
+          def cc(rel, part=None):
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
-              # 全局注入所有已编译聚合分区及其子分区，确保间接依赖可见
+              # 全量传递所有已编译的模块 PCM，消除间接依赖遗漏
               extra = []
-              for agg_name, subs in AGGREGATES.items():
-                  if agg_name in compiled:
-                      extra.append(f"-fmodule-file=util:{agg_name}={compiled[agg_name]}")
-                      for sub in subs:
-                          if sub in compiled:
-                              extra.append(f"-fmodule-file=util:{sub}={compiled[sub]}")
+              for name, path in compiled.items():
+                  extra.append(f"-fmodule-file=util:{name}={path}")
 
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -325,7 +314,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 编译顺序 (与之前相同，已调整 utility.covariant_value 等)
+          # 按照精确的依赖顺序编译
           cc("type_traits/transform.cc", "type_traits.transform")
           cc("type_traits/type_of.cc", "type_traits.type_of")
           cc("functional/elide.cc", "functional.elide")
@@ -340,35 +329,23 @@ jobs:
           cc("utility/hash.cc", "utility.hash")
           cc("utility/ranges.cc", "utility.ranges")
           cc("platform/timer.h.cc", "platform.timer")
-
-          cc("type_traits/type_pack.cc", "type_traits.type_pack", ["type_traits.type_of"])
-          cc("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
-          cc("utility/string.cc", "utility.string", ["utility.constant_wrapper"])
-
-          cc("type_traits/type_traits.cc", "type_traits", AGGREGATES["type_traits"])
-          cc("utility/covariant_value.cc", "utility.covariant_value", ["type_traits", "utility.facade"])
-          cc("utility/utility.cc", "utility", AGGREGATES["utility"])
-
-          cc("memory/autorelease_pool.cc", "memory.autorelease_pool", ["memory.comparator", "utility"])
-          cc("memory/memory.cc", "memory", AGGREGATES["memory"])
-
-          cc("functional/function_ref.cc", "functional.function_ref", ["functional.elide", "type_traits"])
-          cc("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
-          cc("functional/regular_return.cc", "functional.regular_return", ["utility"])
-          cc("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
-
-          cc("functional/functional.cc", "functional", AGGREGATES["functional"])
-
-          cc("platform/lockable.cc", "platform.lockable", ["utility"])
-          cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable"])
-          cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
-          cc("container/sealed_map.cc", "container.sealed_map", [
-              "utility", "functional", "type_traits", "utility.string", "functional.elide",
-              "utility.constant_wrapper", "utility.ranges", "type_traits.function_traits",
-              "type_traits.transform", "utility.facade", "functional.flat_tuple",
-              "functional.function_ref", "type_traits.type_of", "functional.function_constant",
-              "type_traits.type_pack", "utility.covariant_value", "utility.hash"
-          ])
+          cc("type_traits/type_pack.cc", "type_traits.type_pack")
+          cc("type_traits/function_traits.cc", "type_traits.function_traits")
+          cc("utility/string.cc", "utility.string")
+          cc("type_traits/type_traits.cc", "type_traits")
+          cc("utility/covariant_value.cc", "utility.covariant_value")
+          cc("utility/utility.cc", "utility")
+          cc("memory/autorelease_pool.cc", "memory.autorelease_pool")
+          cc("memory/memory.cc", "memory")
+          cc("functional/function_ref.cc", "functional.function_ref")
+          cc("functional/function_constant.cc", "functional.function_constant")
+          cc("functional/regular_return.cc", "functional.regular_return")
+          cc("functional/bind.cc", "functional.bind")
+          cc("functional/functional.cc", "functional")
+          cc("platform/lockable.cc", "platform.lockable")
+          cc("platform/timer.cc", "platform.timer")
+          cc("platform/stop_token.cc", "platform.stop_token")
+          cc("container/sealed_map.cc", "container.sealed_map")
 
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
