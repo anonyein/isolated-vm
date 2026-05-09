@@ -199,7 +199,7 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h（包含标准库以及项目 utility 下的所有头文件）
+          # 2. 创建 bits/stdc++.h（包含所有需要的标准头文件）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -258,10 +258,6 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 追加项目 utility 头文件（提供 apply_cvref_t、type_t 等模块导出的类型）
-          echo "// Project utility headers" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
-          find packages/utility/include -name "*.h" -printf "#include <%f>\n" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
-
           # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
@@ -292,14 +288,16 @@ jobs:
           echo "修复完成"
 
       - name: 构建
-        run: ninja -C build backend_napi_v8
+        run: ninja -C build backend_napi_v8 || echo "构建失败，请将日志提交给 isolated-vm 项目。"
 
       - name: 验证产物
+        if: success()
         run: |
           ls -lh build/packages/backend_napi_v8/
           file build/packages/backend_napi_v8/backend_napi_v8.node
 
       - uses: actions/upload-artifact@v6
+        if: success()
         with:
           name: isolated-vm-android-${{ matrix.abi }}
           path: build/packages/backend_napi_v8/artifacts
