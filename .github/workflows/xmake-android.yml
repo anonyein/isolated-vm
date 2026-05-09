@@ -199,7 +199,7 @@ jobs:
 
       - name: 配置 xmake
         run: |
-          xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} --ndkapi=${{ matrix.ndk_api }} -m release
+          xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} -m release
 
       - name: 构建
         run: xmake build backend_napi_v8
