@@ -267,7 +267,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动排序并编译 utility 模块（传递聚合分区子模块）
+      - name: 自动排序并编译 utility 模块（补充缺失分区）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -288,12 +288,12 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          # ---- 收集所有文件信息 ----
+          # 收集所有文件
           cc_files = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
-          partitions = {}        # 分区名 -> 源文件
-          imports_map = {}       # 分区名 -> [直接导入的分区]
-          is_aggregate = {}      # 分区名 -> bool (是否聚合分区)
-          no_partition = []      # 无模块声明的文件
+          partitions = {}
+          imports_map = {}
+          is_aggregate = {}
+          no_partition = []
 
           for f in cc_files:
               with open(f) as fh:
@@ -304,13 +304,12 @@ jobs:
                   partitions[part] = f
                   imports = re.findall(r'import :([\w.]+)', content)
                   imports_map[part] = imports
-                  # 检查是否为聚合分区（包含 export import 声明）
                   has_export_import = bool(re.search(r'export import :[\w.]+', content))
                   is_aggregate[part] = has_export_import
               elif 'export module util;' not in content:
                   no_partition.append(f)
 
-          # ---- 拓扑排序 ----
+          # 拓扑排序
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
           for part, implist in imports_map.items():
@@ -329,15 +328,14 @@ jobs:
                   if indegree[nxt] == 0:
                       queue.append(nxt)
 
-          # 手动微调：确保 type_of 先于 type_pack
+          # 微调顺序
           if "type_traits.type_of" in sorted_parts and "type_traits.type_pack" in sorted_parts:
               sorted_parts.remove("type_traits.type_of")
               sorted_parts.insert(sorted_parts.index("type_traits.type_pack"), "type_traits.type_of")
 
-          compiled_pcm = {}   # partition -> .pcm path
+          compiled_pcm = {}
 
           def get_recursive_deps(part, visited=None):
-              """递归获取一个分区所聚合的所有子分区"""
               if visited is None:
                   visited = set()
               if part in visited:
@@ -357,45 +355,48 @@ jobs:
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               imports = imports_map.get(part, [])
 
-              # 第一步：生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path]
-              # 收集需要传递的 PCM：直接依赖 + 如果依赖是聚合分区，则传递其所有子分区
               for imp in imports:
                   if imp in compiled_pcm:
                       cmd_pcm.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
-                  # 若该分区是聚合分区，需要传递其内部所有子分区
                   if is_aggregate.get(imp, False):
-                      sub_deps = get_recursive_deps(imp)
-                      for sdep in sub_deps:
+                      for sdep in get_recursive_deps(imp):
                           if sdep in compiled_pcm:
                               cmd_pcm.append(f"-fmodule-file=util:{sdep}={compiled_pcm[sdep]}")
-              print(f"生成 PCM: {part}")
+              print(f"PCM: {part}")
               subprocess.run(cmd_pcm, check=True)
               compiled_pcm[part] = pcm_path
 
-              # 第二步：生成对象文件
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path]
               for imp in imports:
                   if imp in compiled_pcm:
                       cmd_obj.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
                   if is_aggregate.get(imp, False):
-                      sub_deps = get_recursive_deps(imp)
-                      for sdep in sub_deps:
+                      for sdep in get_recursive_deps(imp):
                           if sdep in compiled_pcm:
                               cmd_obj.append(f"-fmodule-file=util:{sdep}={compiled_pcm[sdep]}")
               subprocess.run(cmd_obj, check=True)
 
-          # ---- 执行编译 ----
+          # 编译所有排序好的分区
           for part in sorted_parts:
               compile_partition(part)
 
-          # 主模块接口 _module.cc
+          # 补充编译 _module.cc 中引用但尚未编译的分区
           primary_src = os.path.join(UTIL_DIR, "_module.cc")
+          with open(primary_src) as f:
+              primary_content = f.read()
+          required_parts = re.findall(r'export import :([\w.]+)', primary_content)
+          missing_parts = [p for p in required_parts if p not in compiled_pcm and p in partitions]
+          for part in missing_parts:
+              print(f"补充编译缺失分区: {part}")
+              compile_partition(part)
+
+          # 编译主模块 PCM
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
           for pname, ppath in compiled_pcm.items():
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
-          print("生成主模块 PCM: util")
+          print("主模块 PCM: util")
           subprocess.run(cmd, check=True)
 
           # 编译无模块文件
