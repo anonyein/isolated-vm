@@ -267,7 +267,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 拓扑排序编译 utility 模块（按需编译聚合分区+正确传递子模块）
+      - name: 拓扑排序编译 utility 模块（完整传递聚合分区子模块）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -289,11 +289,11 @@ jobs:
           os.makedirs(PCM_DIR, exist_ok=True)
 
           cc_files = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
-          partitions = {}            # 分区名 -> 源文件路径
-          imports_map = {}           # 分区名 -> [导入的分区名] (import :xxx)
-          is_aggregate = {}          # 分区名 -> bool
-          aggregate_subs = {}        # 聚合分区名 -> [其导出的子分区名] (export import :xxx)
-          no_partition = []          # 没有 export module 的普通文件
+          partitions = {}
+          imports_map = {}
+          is_aggregate = {}
+          aggregate_subs = {}
+          no_partition = []
           primary_src = None
 
           for f in cc_files:
@@ -305,19 +305,16 @@ jobs:
                   partitions[part] = f
                   imports = re.findall(r'import :([\w.]+)', content)
                   imports_map[part] = imports
-                  # 提取该分区 export import 的子分区（用于聚合分区）
                   exports = re.findall(r'export import :([\w.]+)', content)
+                  is_aggregate[part] = bool(exports)
                   if exports:
-                      is_aggregate[part] = True
                       aggregate_subs[part] = exports
-                  else:
-                      is_aggregate[part] = False
               elif re.search(r'export module util;', content):
                   primary_src = f
               else:
                   no_partition.append(f)
 
-          # 拓扑排序（基于 import :xxx 依赖）
+          # 拓扑排序
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
           for part, implist in imports_map.items():
@@ -335,36 +332,31 @@ jobs:
                   indegree[nxt] -= 1
                   if indegree[nxt] == 0:
                       queue.append(nxt)
-          # 补全未纳入拓扑的分区（无依赖也未作为依赖的分区）
           sorted_set = set(sorted_parts)
           for p in partitions:
               if p not in sorted_set:
                   sorted_parts.append(p)
 
-          compiled_pcm = {}   # 分区名 -> .pcm 路径
+          compiled_pcm = {}
 
           def compile_partition(part):
-              if part in compiled_pcm:
-                  return
               src = partitions[part]
               pcm_path = os.path.join(PCM_DIR, f"util-{part}.pcm")
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               imports = imports_map.get(part, [])
 
+              # 收集 PCM 参数（只使用已编译的，不递归编译）
               extra_pcms = []
-              # 确保所有直接依赖的分区已编译，并准备传递 PCM
               for imp in imports:
-                  if imp not in compiled_pcm:
-                      compile_partition(imp)
-                  extra_pcms.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
-                  # 若该依赖是聚合分区，传递其自身及其子分区
+                  if imp in compiled_pcm:
+                      extra_pcms.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+                  # 若依赖是聚合分区，传递其自身和子分区
                   if imp in aggregate_subs:
                       for sdep in aggregate_subs[imp]:
-                          if sdep not in compiled_pcm:
-                              compile_partition(sdep)
-                          flag = f"-fmodule-file=util:{sdep}={compiled_pcm[sdep]}"
-                          if flag not in extra_pcms:
-                              extra_pcms.append(flag)
+                          if sdep in compiled_pcm:
+                              flag = f"-fmodule-file=util:{sdep}={compiled_pcm[sdep]}"
+                              if flag not in extra_pcms:
+                                  extra_pcms.append(flag)
 
               # 生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra_pcms
@@ -376,29 +368,18 @@ jobs:
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra_pcms
               subprocess.run(cmd_obj, check=True)
 
-          # 按拓扑顺序编译所有分区
+          # 按照拓扑顺序编译所有分区（无递归）
           for part in sorted_parts:
               compile_partition(part)
 
-          # 编译主模块 _module.cc
+          # 主模块 _module.cc
           if primary_src:
-              # 确保 _module.cc 导入的所有分区已编译
-              with open(primary_src) as f:
-                  primary_imports = re.findall(r'export import :([\w.]+)', f.read())
-              for p in primary_imports:
-                  if p in partitions:
-                      compile_partition(p)
               main_pcm = os.path.join(PCM_DIR, "util.pcm")
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
               for pname, ppath in compiled_pcm.items():
                   cmd.append(f"-fmodule-file=util:{pname}={ppath}")
               print("主模块 PCM: util")
               subprocess.run(cmd, check=True)
-
-          # 最终兜底：编译所有剩余分区（防止遗漏）
-          for part in partitions:
-              if part not in compiled_pcm:
-                  compile_partition(part)
 
           # 编译无模块文件
           for src in no_partition:
