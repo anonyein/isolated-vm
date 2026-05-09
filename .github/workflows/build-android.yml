@@ -187,10 +187,10 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（强制修正所有模块文件并补全缺失 import）
+      - name: 修复源码（修正模块文件并正确放置分区导入）
         shell: bash
         run: |
-          echo "修复源码: 强制修正所有 module 文件的前两行..."
+          echo "修复源码: 强制修正所有 module 文件的前两行并处理分区导入..."
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
@@ -258,11 +258,10 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 补全缺失的 import
+          # 修正 regular_return.cc 和 bind.cc：先移除之前错误插入的 import，然后在 export module 之前插入正确的导入
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
-            if ! grep -q 'import :type_traits.transform;' "$file"; then
-              sed -i '/^#include <bits\/stdc++.h>$/ a\import :type_traits.transform;' "$file"
-            fi
+            sed -i '/^import :type_traits\.transform;$/d' "$file"
+            sed -i '/^export module util:functional\.\(regular_return\|bind\);/i\import :type_traits.transform;' "$file"
           done
 
       - name: 清理 ninja 中的不兼容标志
