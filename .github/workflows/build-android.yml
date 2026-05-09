@@ -261,11 +261,26 @@ jobs:
           find packages -name '*.cc' -exec sed -i 's/^module;$/\/\/ module;/g' {} \;
           find packages -name '*.cc' -exec sed -i 's/^export module \(.*\);/\/\/ export module \1;/g' {} \;
 
-          # 4. 注释掉所有 import 语句（模块分区的导入）
+          # 4. 注释掉所有 import 语句
           find packages -name '*.cc' -exec sed -i 's/^import :\(.*\);/\/\/ import :\1;/g' {} \;
           find packages -name '*.cc' -exec sed -i 's/^import \([^:]*\);$/\/\/ import \1;/g' {} \;
 
-          # 5. 清理 build.ninja 中的不兼容标志
+          # 5. 暴力清理 build.ninja：移除所有模块相关的构建规则和依赖
+          # 删除所有 dyndep 行
+          sed -i '/dyndep/d' build/build.ninja
+          # 移除所有 .modmap 文件引用
+          sed -i 's/ @[^ ]*\.modmap//g' build/build.ninja
+          # 将 CXX_MODULES 改为 CXX
+          sed -i 's/CXX_MODULES/CXX/g' build/build.ninja
+          # 删除 .pcm 目标（模块接口文件）
+          sed -i '/\.pcm/d' build/build.ninja
+          # 移除可能残留的 -fmodule-output= 等标志（通常不会单独出现，但保险）
+          sed -i 's/-fmodule-output=[^ ]*//g' build/build.ninja
+          sed -i 's/-fmodule-file=[^ ]*//g' build/build.ninja
+          # 删除 CXX.dd 文件引用
+          sed -i 's/ _npm\/[^ ]*\.dd//g' build/build.ninja
+
+          # 6. 清理不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
@@ -274,7 +289,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 6. 注入 Boost 头文件路径
+          # 7. 注入 Boost 头文件路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
