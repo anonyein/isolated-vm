@@ -8,7 +8,7 @@ on:
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
   NODE_HEADERS: 24.15.0
-  ANDROID_NDK_VERSION: r27c
+  ANDROID_NDK_VERSION: r29
   ANDROID_NDK_HOME: /tmp/android-ndk
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
           pnpm install --frozen-lockfile
           npx tsc -b
 
-      - name: 下载并配置 Android NDK (r27c)
+      - name: 下载并配置 Android NDK (r29)
         run: |
           mkdir -p $ANDROID_NDK_HOME
           curl -fsSL https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip -o ndk.zip
@@ -199,7 +199,7 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h（无条件提供 stop_token 和 source_location 替代）
+          # 2. 创建 bits/stdc++.h（只包含标准库，NDK r29 已提供所有需要的头文件）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -237,8 +237,10 @@ jobs:
           #include <sstream>
           #include <stack>
           #include <stdexcept>
+          #include <stop_token>
           #include <string>
           #include <string_view>
+          #include <source_location>
           #include <tuple>
           #include <type_traits>
           #include <unordered_map>
@@ -251,24 +253,6 @@ jobs:
           #include <ranges>
           #include <bit>
           #include <version>
-
-          // 替代 stop_token / stop_source
-          namespace std {
-              class stop_token {};
-              class stop_source {
-              public:
-                  stop_token get_token() const { return stop_token(); }
-              };
-          }
-
-          // 替代 source_location
-          namespace std {
-              class source_location {
-              public:
-                  static source_location current() noexcept { return source_location(); }
-                  const char* function_name() const noexcept { return "unknown"; }
-              };
-          }
           STD_HEADER
 
           # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
