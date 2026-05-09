@@ -9,15 +9,17 @@ set_policy("build.c++.modules", true)
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
--- 全局头文件路径
-add_includedirs("packages/utility/include")
+-- 获取工作区根目录（GitHub Actions 环境变量）
+local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
+
+-- 全局头文件路径（使用绝对路径避免相对路径解析问题）
+add_includedirs(path.join(workspace, "packages/utility/include"))
 add_includedirs("/tmp/host-boost-headers")
-add_includedirs("packages/third_party/nodejs/deps/nodejs/24.15.0/include/node")
-add_includedirs("packages/third_party/v8/deps/nodejs/24.15.0/include/node")
-add_includedirs("packages/third_party/v8")
+add_includedirs(path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0/include/node"))
+add_includedirs(path.join(workspace, "packages/third_party/v8/deps/nodejs/24.15.0/include/node"))
+add_includedirs(path.join(workspace, "packages/third_party/v8"))
 add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
--- 关键：napi_js_initialize.h 所在目录
-add_includedirs("packages/auto_js/napi/include")
+add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
 
 add_linkdirs("deps/javet")
 
@@ -66,8 +68,7 @@ target("napi_js")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8")
     add_files("packages/auto_js/napi/**.cc")
     exclude_tests()
-    -- 公开头文件路径给依赖者
-    add_includedirs("packages/auto_js/napi/include", {public = true})
+    add_includedirs(path.join(workspace, "packages/auto_js/napi/include"), {public = true})
 
 target("v8_js")
     set_kind("static")
@@ -87,8 +88,10 @@ target("backend_napi_v8")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8", "napi_js", "v8_js", "isolated_vm")
     add_files("packages/backend_napi_v8/**.cc")
     exclude_tests()
-    -- 确保本目标也能找到 napi 头文件
-    add_includedirs("packages/auto_js/napi/include")
+    -- 显式添加所有关键包含路径，确保模块扫描可用
+    add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
+    add_includedirs(path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0/include/node"))
+    add_includedirs(path.join(workspace, "packages/third_party/v8/deps/nodejs/24.15.0/include/node"))
     add_links("javet-node-android-i18n")
     if is_plat("android") then
         add_links("uv", "android", "log", "EGL", "GLESv2", "OpenSLES")
