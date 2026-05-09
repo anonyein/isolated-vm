@@ -283,11 +283,11 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动排序并预编译 utility 模块（按依赖顺序）
+      - name: 自动排序并预编译 utility 模块（拓扑排序+分区 PCM）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
-          import os, subprocess, glob
+          import os, subprocess, re, glob, collections
 
           SRC_ROOT = os.getcwd()
           BUILD_DIR = os.path.join(SRC_ROOT, "build")
@@ -304,48 +304,100 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          def compile_file(src, extra_args=[], is_interface=False):
-              base = os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", "")
-              out = os.path.join(PCM_DIR, base + (".pcm" if is_interface else ".o"))
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", out] + extra_args
-              print(f"编译: {src} -> {out}")
-              subprocess.run(cmd, check=True)
-              return out
-
-          # Tier 0: 无内部依赖的分区（可并行，但顺序执行）
-          tier0 = [
-              "utility/utility.cc",
-              "memory/memory.cc",
-              "platform/lockable.cc",
-              "functional/functional.cc",
-              "functional/bind.cc",       # 仅依赖 ::utility 和 ::functional.flat_tuple，而 flat_tuple 也在这里
-              "functional/flat_tuple.cc", # 无内部依赖
-              "type_traits/transform.cc",
-              "type_traits/type_of.cc",
-          ]
-          for f in tier0:
-              compile_file(os.path.join(UTIL_DIR, f))
-
-          # Tier 1: 依赖 Tier 0 的分区
-          tier1 = [
-              "type_traits/function_traits.cc",  # 依赖 :type_traits.transform
-              "functional/regular_return.cc",    # 依赖 :utility
-              "functional/bind.cc",              # 已在上面，但为确保依赖，再写一次也没事
-          ]
-          for f in tier1:
-              compile_file(os.path.join(UTIL_DIR, f))
-
-          # 主模块接口 _module.cc 必须最后编译（聚合所有分区）
-          compile_file(os.path.join(UTIL_DIR, "_module.cc"))
-
-          # 编译其它所有未被列出的 .cc 文件（它们通常没有模块依赖）
-          compiled_set = set(tier0 + tier1 + ["_module.cc"])
+          # 扫描所有 .cc 文件，提取分区信息
+          files = []
           for f in glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True):
-              rel = os.path.relpath(f, UTIL_DIR)
-              if rel not in compiled_set:
-                  compile_file(f)
+              with open(f) as fh:
+                  content = fh.read()
+              # 提取 export module util:xxx 分区名
+              m = re.search(r'export module util:([\w.]+)', content)
+              partition = m.group(1) if m else None
+              # 提取 import :xxx 依赖
+              imports = re.findall(r'import :([\w.]+)', content)
+              # 是否为主模块接口（export module util;）
+              is_primary = bool(re.search(r'export module util;', content))
+              files.append({'path': f, 'partition': partition, 'imports': imports, 'primary': is_primary})
 
-          print("utility 模块预编译完成")
+          # 构建依赖图：分区名为节点，依赖关系为边
+          graph = collections.defaultdict(list)
+          indegree = collections.defaultdict(int)
+          nodes = set()
+          for f in files:
+              if f['partition']:
+                  nodes.add(f['partition'])
+                  for imp in f['imports']:
+                      if imp in nodes:  # 只考虑同模块内的依赖
+                          graph[imp].append(f['partition'])
+                          indegree[f['partition']] += 1
+                  if f['partition'] not in indegree:
+                      indegree[f['partition']] = 0
+
+          # 拓扑排序
+          queue = [n for n in nodes if indegree[n] == 0]
+          sorted_partitions = []
+          while queue:
+              n = queue.pop(0)
+              sorted_partitions.append(n)
+              for m in graph[n]:
+                  indegree[m] -= 1
+                  if indegree[m] == 0:
+                      queue.append(m)
+
+          # 按顺序编译分区
+          compiled_pcm = {}  # partition -> pcm_path
+          for part in sorted_partitions:
+              # 找到对应文件
+              src = None
+              for f in files:
+                  if f['partition'] == part:
+                      src = f['path']
+                      break
+              if not src:
+                  continue
+              pcm_path = os.path.join(PCM_DIR, f"util-{part}.pcm")
+              obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+
+              # 先生成 pcm
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", src, "-o", pcm_path]
+              # 如果依赖其他分区，添加它们的 pcm
+              for imp in f['imports']:
+                  if imp in compiled_pcm:
+                      cmd.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+              subprocess.run(cmd, check=True)
+              compiled_pcm[part] = pcm_path
+
+              # 再生成 .o
+              cmd2 = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path]
+              for imp in f['imports']:
+                  if imp in compiled_pcm:
+                      cmd2.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+              subprocess.run(cmd2, check=True)
+
+          # 编译主模块接口 _module.cc（生成 util.pcm，不需要 .o）
+          primary_src = os.path.join(UTIL_DIR, "_module.cc")
+          main_pcm = os.path.join(PCM_DIR, "util.pcm")
+          cmd_primary = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", primary_src, "-o", main_pcm]
+          for part in sorted_partitions:
+              if part in compiled_pcm:
+                  cmd_primary.append(f"-fmodule-file=util:{part}={compiled_pcm[part]}")
+          subprocess.run(cmd_primary, check=True)
+
+          # 编译剩余的非模块文件（没有 export module 的普通 .cc）
+          for f in files:
+              if not f['partition'] and not f['primary']:
+                  src = f['path']
+                  obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj]
+                  # 普通文件如果 import 了分区，需传递 PCM
+                  with open(src) as sf:
+                      content = sf.read()
+                  imports = re.findall(r'import util:([\w.]+)', content)
+                  for imp in imports:
+                      if imp in compiled_pcm:
+                          cmd.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+                  subprocess.run(cmd, check=True)
+
+          print("utility 模块编译完成（拓扑排序 + PCM 生成）")
 
       - name: 构建最终目标
         run: ninja -C build backend_napi_v8
