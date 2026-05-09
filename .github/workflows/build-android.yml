@@ -267,7 +267,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动拓扑排序并编译 utility 模块（两步法生成 PCM）
+      - name: 自动排序并编译 utility 模块（修正 PCM 生成）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -325,7 +325,7 @@ jobs:
                   if indegree[nxt] == 0:
                       queue.append(nxt)
 
-          # 确保 type_of 在 type_pack 之前，手动调整顺序
+          # 手动确保 type_of 在 type_pack 之前
           if "type_traits.type_of" in sorted_parts and "type_traits.type_pack" in sorted_parts:
               sorted_parts.remove("type_traits.type_of")
               sorted_parts.insert(sorted_parts.index("type_traits.type_pack"), "type_traits.type_of")
@@ -340,8 +340,8 @@ jobs:
               with open(src) as f:
                   imports = re.findall(r'import :([\w.]+)', f.read())
 
-              # 第一步：生成 PCM
-              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-Xclang", "-emit-module-interface", src, "-o", pcm_path]
+              # 第一步：生成 PCM（加 -c 避免链接）
+              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path]
               for imp in imports:
                   if imp in compiled_pcm:
                       cmd_pcm.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
@@ -362,7 +362,7 @@ jobs:
           # 主模块接口 _module.cc
           primary_src = os.path.join(UTIL_DIR, "_module.cc")
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
           for pname, ppath in compiled_pcm.items():
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("生成主模块 PCM: util")
