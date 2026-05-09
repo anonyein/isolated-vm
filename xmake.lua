@@ -2,26 +2,22 @@ set_project("isolated-vm")
 set_version("0.0.1")
 add_rules("mode.release")
 
--- C++20 模块扫描
 set_languages("gnu++26")
-
--- 全局定义
 add_defines("EXPORT_IS_EXPORT")
 
--- 源码修复中已添加 bits/stdc++.h，此处包含 Boost 和 NDK 头文件路径
+-- 全局头文件路径
 add_includedirs("packages/utility/include")
 add_includedirs("/tmp/host-boost-headers")
--- Node 和 V8 头文件路径
 add_includedirs("packages/third_party/nodejs/deps/nodejs/24.15.0/include/node")
 add_includedirs("packages/third_party/v8/deps/nodejs/24.15.0/include/node")
 add_includedirs("packages/third_party/v8")
--- bits/stdc++.h 所在目录
+-- bits/stdc++.h 所在的 NDK C++ 头文件目录
 add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
 
 -- 链接目录
 add_linkdirs("deps/javet")
 
--- 根据架构设定目标三元组
+-- 根据架构设置目标三元组（API 级别 24）
 if is_arch("arm64-v8a") then
     add_cxflags("--target=aarch64-none-linux-android24")
     add_ldflags("--target=aarch64-none-linux-android24")
@@ -30,10 +26,9 @@ elseif is_arch("x86_64") then
     add_ldflags("--target=x86_64-none-linux-android24")
 end
 
--- 通用编译/链接标志
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- ============ 库定义 ============
+-- 目标定义
 target("utility")
     set_kind("static")
     add_files("packages/utility/**.cc")
