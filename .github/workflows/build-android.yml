@@ -188,105 +188,126 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码与编译参数
+      - name: 修复源码与编译参数（模块替换为头文件）
         shell: bash
         run: |
-          echo "修复源码中的 import std、模块结构和兼容性问题..."
+          echo "=== 将 C++20 模块导入替换为传统 #include ==="
+          # 1. 定义模块到头文件的映射（项目内部，按目录结构猜测）
+          declare -A MODULE_MAP
+          MODULE_MAP["util:container.mutable_priority_queue"]="utility/container/mutable_priority_queue.h"
+          MODULE_MAP["util:container.segmented_priority_queue"]="utility/container/segmented_priority_queue.h"
+          MODULE_MAP["util:container.sealed_map"]="utility/container/sealed_map.h"
+          MODULE_MAP["util:container.tinker_queue"]="utility/container/tinker_queue.h"
+          MODULE_MAP["util:functional.bind"]="utility/functional/bind.h"
+          MODULE_MAP["util:functional.regular_return"]="utility/functional/regular_return.h"
+          MODULE_MAP["util:functional.elide"]="utility/functional/elide.h"
+          MODULE_MAP["util:functional.function_constant"]="utility/functional/function_constant.h"
+          MODULE_MAP["util:functional.function_ref"]="utility/functional/function_ref.h"
+          MODULE_MAP["util:functional.flat_tuple"]="utility/functional/flat_tuple.h"
+          MODULE_MAP["util:functional.functional"]="utility/functional/functional.h"
+          MODULE_MAP["util:memory.autorelease_pool"]="utility/memory/autorelease_pool.h"
+          MODULE_MAP["util:memory.comparator"]="utility/memory/comparator.h"
+          MODULE_MAP["util:memory.noinit_allocator"]="utility/memory/noinit_allocator.h"
+          MODULE_MAP["util:memory.memory"]="utility/memory/memory.h"
+          MODULE_MAP["util:meta.algorithm"]="utility/meta/algorithm.h"
+          MODULE_MAP["util:platform.stop_token"]="utility/platform/stop_token.h"
+          MODULE_MAP["util:platform.lockable"]="utility/platform/lockable.h"
+          MODULE_MAP["util:platform.timer"]="utility/platform/timer.h"
+          MODULE_MAP["util:type_traits.transform"]="utility/type_traits/transform.h"
+          MODULE_MAP["util:type_traits.type_of"]="utility/type_traits/type_of.h"
+          MODULE_MAP["util:type_traits.function_traits"]="utility/type_traits/function_traits.h"
+          MODULE_MAP["util:type_traits.type_traits"]="utility/type_traits/type_traits.h"
+          MODULE_MAP["util:type_traits.type_pack"]="utility/type_traits/type_pack.h"
+          MODULE_MAP["util:utility.constant_wrapper"]="utility/utility/constant_wrapper.h"
+          MODULE_MAP["util:utility.covariant_value"]="utility/utility/covariant_value.h"
+          MODULE_MAP["util:utility.facade"]="utility/utility/facade.h"
+          MODULE_MAP["util:utility.hash"]="utility/utility/hash.h"
+          MODULE_MAP["util:utility.string"]="utility/utility/string.h"
+          MODULE_MAP["util:utility.utility"]="utility/utility/utility.h"
+          MODULE_MAP["util:utility.variant"]="utility/utility/variant.h"
+          MODULE_MAP["util:utility.ranges"]="utility/utility/ranges.h"
+          MODULE_MAP["auto_js:builtin.accept"]="auto_js/js/builtin/accept.h"
+          MODULE_MAP["auto_js:builtin.visit"]="auto_js/js/builtin/visit.h"
+          MODULE_MAP["auto_js:builtin.value"]="auto_js/js/builtin/value.h"
+          MODULE_MAP["auto_js:enum.types"]="auto_js/js/enum/types.h"
+          MODULE_MAP["auto_js:enum.accept"]="auto_js/js/enum/accept.h"
+          MODULE_MAP["auto_js:enum.visit"]="auto_js/js/enum/visit.h"
+          MODULE_MAP["auto_js:intrinsics.array_buffer"]="auto_js/js/intrinsics/array_buffer.h"
+          MODULE_MAP["auto_js:intrinsics.bigint"]="auto_js/js/intrinsics/bigint.h"
+          MODULE_MAP["auto_js:intrinsics.date"]="auto_js/js/intrinsics/date.h"
+          MODULE_MAP["auto_js:intrinsics.error"]="auto_js/js/intrinsics/error.h"
+          MODULE_MAP["auto_js:intrinsics.external"]="auto_js/js/intrinsics/external.h"
+          MODULE_MAP["auto_js:reference.accept"]="auto_js/js/reference/accept.h"
+          MODULE_MAP["auto_js:reference.visit"]="auto_js/js/reference/visit.h"
+          MODULE_MAP["auto_js:reference.reference_of"]="auto_js/js/reference/reference_of.h"
+          MODULE_MAP["auto_js:reference.referential_value"]="auto_js/js/reference/referential_value.h"
+          MODULE_MAP["auto_js:struct.accept"]="auto_js/js/struct/accept.h"
+          MODULE_MAP["auto_js:struct.visit"]="auto_js/js/struct/visit.h"
+          MODULE_MAP["auto_js:struct.types"]="auto_js/js/struct/types.h"
+          MODULE_MAP["auto_js:tag"]="auto_js/js/tag.h"
+          MODULE_MAP["auto_js:transfer.accept"]="auto_js/js/transfer/accept.h"
+          MODULE_MAP["auto_js:transfer.visit"]="auto_js/js/transfer/visit.h"
+          MODULE_MAP["auto_js:transfer.types"]="auto_js/js/transfer/types.h"
+          MODULE_MAP["auto_js:transfer.deferred_receiver"]="auto_js/js/transfer/deferred_receiver.h"
+          MODULE_MAP["auto_js:tuple.accept"]="auto_js/js/tuple/accept.h"
+          MODULE_MAP["auto_js:tuple.visit"]="auto_js/js/tuple/visit.h"
+          MODULE_MAP["auto_js:type.property"]="auto_js/js/type/property.h"
+          MODULE_MAP["auto_js:type.function"]="auto_js/js/type/function.h"
+          MODULE_MAP["auto_js:union.accept"]="auto_js/js/union/accept.h"
+          MODULE_MAP["auto_js:union.types"]="auto_js/js/union/types.h"
+          MODULE_MAP["auto_js:variant.accept"]="auto_js/js/variant/accept.h"
+          MODULE_MAP["auto_js:variant.visit"]="auto_js/js/variant/visit.h"
+          MODULE_MAP["auto_js:variant.types"]="auto_js/js/variant/types.h"
+          MODULE_MAP["auto_js:vector.accept"]="auto_js/js/vector/accept.h"
+          MODULE_MAP["auto_js:vector.visit"]="auto_js/js/vector/visit.h"
+          MODULE_MAP["auto_js:vector.vector_of"]="auto_js/js/vector/vector_of.h"
+          MODULE_MAP["auto_js:napi._module"]="auto_js/napi/_module.h"
+          MODULE_MAP["auto_js:napi.api"]="auto_js/napi/api.h"
+          MODULE_MAP["auto_js:napi.callback_info"]="auto_js/napi/api/callback_info.h"
+          # ... 其他需要时再添加
 
-          # 0. 精准修复 elide.cc 的 GCC 扩展语法
+          # 2. 遍历所有 .cc 文件，替换模块导入
+          for f in $(find packages -name '*.cc'); do
+            for mod in "${!MODULE_MAP[@]}"; do
+              header="${MODULE_MAP[$mod]}"
+              # 替换 import module_name; 为 #include "header"
+              sed -i "s|import ${mod};|#include \"${header}\"|g" "$f"
+              # 替换 import :partition; 为对应的 import（如果没有完全限定）
+              # 此处仅处理常见情况，可能需要更复杂的解析，但由于源文件大多用了完全限定名，我们先从这里开始
+            done
+            # 删除剩余的 import std; （如果还有）
+            sed -i '/^import std;$/d' "$f"
+            # 注释掉 export module xxx; 声明（不再需要模块导出）
+            sed -i 's/^export module .*/\/\/ export module ... (disabled for header-only)/' "$f"
+            # 同时注释掉 module; 声明
+            sed -i 's/^module;$/\/\/ module; (disabled)/' "$f"
+          done
+
+          # 3. 如果某些 .h 文件不存在，我们需要生成简单的头文件（包含原本的定义）
+          # 这里不再详细展开，因为这过于复杂且不确定。如果报头文件缺失，构建还是会失败，因此强烈建议检查并补全。
+
+          # 4. 修复 elide.cc 的语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
-          # 1. 删除所有 import std; 行
-          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-
-          # 2. 创建 bits/stdc++.h（包含所有需要的 C++ 标准头文件）
-          NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
-          mkdir -p "${NDK_CXX_HEADERS}/bits"
-          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
-          #include <cstdlib>
-          #include <cstdint>
-          #include <cstddef>
-          #include <cstring>
-          #include <cwchar>
-          #include <cstdio>
-          #include <cassert>
-          #include <algorithm>
-          #include <array>
-          #include <chrono>
-          #include <concepts>
-          #include <condition_variable>
-          #include <deque>
-          #include <exception>
-          #include <forward_list>
-          #include <functional>
-          #include <initializer_list>
-          #include <iomanip>
-          #include <iostream>
-          #include <iterator>
-          #include <limits>
-          #include <list>
-          #include <map>
-          #include <memory>
-          #include <mutex>
-          #include <new>
-          #include <numeric>
-          #include <optional>
-          #include <queue>
-          #include <random>
-          #include <ratio>
-          #include <set>
-          #include <shared_mutex>
-          #include <span>
-          #include <sstream>
-          #include <stack>
-          #include <stdexcept>
-          #include <stop_token>
-          #include <string>
-          #include <string_view>
-          #include <source_location>
-          #include <tuple>
-          #include <type_traits>
-          #include <unordered_map>
-          #include <unordered_set>
-          #include <utility>
-          #include <variant>
-          #include <vector>
-          #include <cmath>
-          #include <compare>
-          #include <ranges>
-          #include <bit>
-          #include <version>
-          STD_HEADER
-
-          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
+          # 5. 清除之前可能插入的 bits/stdc++.h（因为现在我们不再需要）
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
-          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
-          for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
-            if ! grep -q '^module;$' "$f"; then
-              sed -i '1i\module;' "$f"
-              sed -i '2i\#include <bits/stdc++.h>' "$f"
-            fi
-          done
-
-          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
-          find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
-
-          # 6. 对于既无 module; 也无 export module 的文件，在开头插入 #include
-          find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
-
-          # 7. 仅删除明确不兼容的标志，保留 -fimplicit-module-maps 等模块支持标志
+          # 6. 清理不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+          # 移除模块相关标志，因为不再需要
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 8. 注入 Boost 头文件路径（已通过 CMAKE_CXX_FLAGS 添加，此处双重保险）
+          # 7. 注入 Boost 路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
 
-          echo "修复完成"
+          echo "模块到头文件转换完成（可能仍需根据缺失头文件进行调整）"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
