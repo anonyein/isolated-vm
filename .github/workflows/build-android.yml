@@ -190,15 +190,10 @@ jobs:
       - name: 修复源码（import std 替换、elide.cc 修复）
         shell: bash
         run: |
-          echo "修复源码中的 import std 和模块结构..."
-          # 0. 精准修复 elide.cc 的 GCC 扩展语法
+          echo "修复源码..."
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-
-          # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-
-          # 2. 创建 bits/stdc++.h（包含所有需要的标准头文件）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -256,38 +251,27 @@ jobs:
           #include <bit>
           #include <version>
           STD_HEADER
-
-          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
-
-          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
           for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
             if ! grep -q '^module;$' "$f"; then
               sed -i '1i\module;' "$f"
               sed -i '2i\#include <bits/stdc++.h>' "$f"
             fi
           done
-
-          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
           find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
-
-          # 6. 对于既无 module; 也无 export module 的文件，在开头插入 #include
           find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
 
-          echo "修复完成"
-
       - name: 清理 ninja 中的不兼容标志
-        shell: bash
         run: |
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动排序并预编译 utility 模块（拓扑排序+分区 PCM）
+      - name: 预编译 utility 模块（硬编码顺序）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
-          import os, subprocess, re, glob, collections
+          import os, subprocess, glob
 
           SRC_ROOT = os.getcwd()
           BUILD_DIR = os.path.join(SRC_ROOT, "build")
@@ -304,100 +288,77 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          # 扫描所有 .cc 文件，提取分区信息
-          files = []
-          for f in glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True):
-              with open(f) as fh:
-                  content = fh.read()
-              # 提取 export module util:xxx 分区名
-              m = re.search(r'export module util:([\w.]+)', content)
-              partition = m.group(1) if m else None
-              # 提取 import :xxx 依赖
-              imports = re.findall(r'import :([\w.]+)', content)
-              # 是否为主模块接口（export module util;）
-              is_primary = bool(re.search(r'export module util;', content))
-              files.append({'path': f, 'partition': partition, 'imports': imports, 'primary': is_primary})
+          pcm_map = {}
 
-          # 构建依赖图：分区名为节点，依赖关系为边
-          graph = collections.defaultdict(list)
-          indegree = collections.defaultdict(int)
-          nodes = set()
-          for f in files:
-              if f['partition']:
-                  nodes.add(f['partition'])
-                  for imp in f['imports']:
-                      if imp in nodes:  # 只考虑同模块内的依赖
-                          graph[imp].append(f['partition'])
-                          indegree[f['partition']] += 1
-                  if f['partition'] not in indegree:
-                      indegree[f['partition']] = 0
-
-          # 拓扑排序
-          queue = [n for n in nodes if indegree[n] == 0]
-          sorted_partitions = []
-          while queue:
-              n = queue.pop(0)
-              sorted_partitions.append(n)
-              for m in graph[n]:
-                  indegree[m] -= 1
-                  if indegree[m] == 0:
-                      queue.append(m)
-
-          # 按顺序编译分区
-          compiled_pcm = {}  # partition -> pcm_path
-          for part in sorted_partitions:
-              # 找到对应文件
-              src = None
-              for f in files:
-                  if f['partition'] == part:
-                      src = f['path']
-                      break
-              if not src:
-                  continue
-              pcm_path = os.path.join(PCM_DIR, f"util-{part}.pcm")
+          def compile_partition(src_rel, partition_name, dependencies=[]):
+              src = os.path.join(UTIL_DIR, src_rel)
+              pcm_path = os.path.join(PCM_DIR, f"util-{partition_name}.pcm")
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-
-              # 先生成 pcm
+              # PCM
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", src, "-o", pcm_path]
-              # 如果依赖其他分区，添加它们的 pcm
-              for imp in f['imports']:
-                  if imp in compiled_pcm:
-                      cmd.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+              for dep in dependencies:
+                  if dep in pcm_map:
+                      cmd.append(f"-fmodule-file=util:{dep}={pcm_map[dep]}")
+              print(f"PCM: {partition_name}")
               subprocess.run(cmd, check=True)
-              compiled_pcm[part] = pcm_path
-
-              # 再生成 .o
+              pcm_map[partition_name] = pcm_path
+              # Object
               cmd2 = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path]
-              for imp in f['imports']:
-                  if imp in compiled_pcm:
-                      cmd2.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+              for dep in dependencies:
+                  if dep in pcm_map:
+                      cmd2.append(f"-fmodule-file=util:{dep}={pcm_map[dep]}")
               subprocess.run(cmd2, check=True)
 
-          # 编译主模块接口 _module.cc（生成 util.pcm，不需要 .o）
-          primary_src = os.path.join(UTIL_DIR, "_module.cc")
+          def compile_plain(src_rel):
+              src = os.path.join(UTIL_DIR, src_rel)
+              obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path], check=True)
+
+          # Tier 0
+          compile_partition("utility/utility.cc", "utility")
+          compile_partition("memory/memory.cc", "memory")
+          compile_partition("type_traits/transform.cc", "type_traits.transform")
+          compile_partition("type_traits/type_of.cc", "type_traits.type_of")
+          compile_partition("functional/flat_tuple.cc", "functional.flat_tuple")
+          compile_partition("functional/function_constant.cc", "functional.function_constant")
+          compile_partition("functional/function_ref.cc", "functional.function_ref")
+          compile_partition("functional/elide.cc", "functional.elide")
+          compile_partition("functional/functional.cc", "functional")
+          compile_partition("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
+          compile_partition("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
+          compile_partition("container/tinker_queue.cc", "container.tinker_queue")
+          compile_partition("container/sealed_map.cc", "container.sealed_map")
+
+          # Tier 1
+          compile_partition("platform/lockable.cc", "platform.lockable", ["utility"])
+          compile_partition("functional/regular_return.cc", "functional.regular_return", ["utility"])
+          compile_partition("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
+          compile_partition("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
+
+          # Main module interface
+          src = os.path.join(UTIL_DIR, "_module.cc")
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd_primary = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", primary_src, "-o", main_pcm]
-          for part in sorted_partitions:
-              if part in compiled_pcm:
-                  cmd_primary.append(f"-fmodule-file=util:{part}={compiled_pcm[part]}")
-          subprocess.run(cmd_primary, check=True)
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", src, "-o", main_pcm]
+          for pname, ppath in pcm_map.items():
+              cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+          subprocess.run(cmd, check=True)
 
-          # 编译剩余的非模块文件（没有 export module 的普通 .cc）
-          for f in files:
-              if not f['partition'] and not f['primary']:
-                  src = f['path']
-                  obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj]
-                  # 普通文件如果 import 了分区，需传递 PCM
-                  with open(src) as sf:
-                      content = sf.read()
-                  imports = re.findall(r'import util:([\w.]+)', content)
-                  for imp in imports:
-                      if imp in compiled_pcm:
-                          cmd.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
-                  subprocess.run(cmd, check=True)
+          # Remaining non-module files
+          known_partitions = {
+              "utility/utility.cc", "memory/memory.cc", "type_traits/transform.cc",
+              "type_traits/type_of.cc", "functional/flat_tuple.cc", "functional/function_constant.cc",
+              "functional/function_ref.cc", "functional/elide.cc", "functional/functional.cc",
+              "container/mutable_priority_queue.cc", "container/segmented_priority_queue.cc",
+              "container/tinker_queue.cc", "container/sealed_map.cc",
+              "platform/lockable.cc", "functional/regular_return.cc",
+              "type_traits/function_traits.cc", "functional/bind.cc", "_module.cc"
+          }
+          for f in glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True):
+              rel = os.path.relpath(f, UTIL_DIR)
+              if rel not in known_partitions:
+                  compile_plain(rel)
 
-          print("utility 模块编译完成（拓扑排序 + PCM 生成）")
+          print("utility 模块编译完成")
 
       - name: 构建最终目标
         run: ninja -C build backend_napi_v8
