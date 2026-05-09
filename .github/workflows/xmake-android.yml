@@ -94,19 +94,20 @@ jobs:
       - name: 下载 Node.js 头文件并调整路径
         run: |
           mkdir -p deps/nodejs
-          # 下载并解压到临时目录
           curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C /tmp
-          # 目标路径 deps/nodejs/${{ env.NODE_HEADERS }}（必须存在，否则复制会失败）
           mkdir -p "deps/nodejs/${{ env.NODE_HEADERS }}"
           cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "deps/nodejs/${{ env.NODE_HEADERS }}/"
-          # 子包需要的复制
+          # 同时复制到子包需要的路径
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r "deps/nodejs/${{ env.NODE_HEADERS }}"/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
           mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r "deps/nodejs/${{ env.NODE_HEADERS }}"/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
 
-      - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
+      - name: 准备 V8 头文件（创建目录并补全缺失的 v8-gn.h）
         run: |
+          mkdir -p deps/nodejs/${{ env.NODE_HEADERS }}/include/node
+          mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node
+          mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node
           touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
