@@ -267,7 +267,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动拓扑排序并编译 utility 模块（使用 -fmodule-output）
+      - name: 自动拓扑排序并编译 utility 模块（移除标准库模块标志）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -280,10 +280,10 @@ jobs:
           TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
           SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
+          # 不再使用任何与标准库模块相关的标志
           BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
                        f"-isystem /tmp/host-boost-headers -isystem {SRC_ROOT}/packages/utility/include " \
-                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG " \
-                       f"-fimplicit-module-maps -fmodules-cache-path={BUILD_DIR}/module_cache"
+                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG"
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
