@@ -187,10 +187,10 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（修正模块文件并正确放置分区导入）
+      - name: 修复源码（补全所有缺失的分区导入）
         shell: bash
         run: |
-          echo "修复源码: 强制修正所有 module 文件的前两行并处理分区导入..."
+          echo "修复源码: 强制修正所有 module 文件并补全 import 语句..."
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
@@ -263,6 +263,9 @@ jobs:
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
           done
+          # bind.cc 还需要 function_traits 和 type_traits 聚合分区
+          sed -i '/^export module util:functional\.bind;$/a\import :type_traits.function_traits;' packages/utility/functional/bind.cc
+          sed -i '/^export module util:functional\.bind;$/a\import :type_traits;' packages/utility/functional/bind.cc
 
       - name: 清理 ninja 中的不兼容标志
         run: |
@@ -298,7 +301,6 @@ jobs:
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
-              # 全量传递所有已编译的模块 PCM，消除间接依赖遗漏
               extra = []
               for name, path in compiled.items():
                   extra.append(f"-fmodule-file=util:{name}={path}")
@@ -313,7 +315,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 按照精确的依赖顺序编译
+          # 精确编译顺序
           cc("type_traits/transform.cc", "type_traits.transform")
           cc("type_traits/type_of.cc", "type_traits.type_of")
           cc("functional/elide.cc", "functional.elide")
