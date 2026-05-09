@@ -264,7 +264,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（自动展开聚合分区子模块）
+      - name: 完整编译 utility 模块（正确顺序，自动展开聚合分区子模块）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -320,7 +320,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # ==================== Tier 0: 叶子分区 ====================
+          # ==================== Tier 0: 叶子分区（无内部模块依赖） ====================
           cc("type_traits/transform.cc", "type_traits.transform")
           cc("type_traits/type_of.cc", "type_traits.type_of")
           cc("functional/elide.cc", "functional.elide")
@@ -336,7 +336,7 @@ jobs:
           cc("utility/ranges.cc", "utility.ranges")
           cc("platform/timer.h.cc", "platform.timer")
 
-          # ==================== Tier 1: 依赖 Tier 0 的分区 ====================
+          # ==================== Tier 1: 依赖叶子分区 ====================
           cc("type_traits/type_pack.cc", "type_traits.type_pack", ["type_traits.type_of"])
           cc("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
           cc("utility/string.cc", "utility.string", ["utility.constant_wrapper"])
@@ -344,20 +344,29 @@ jobs:
           # ==================== Tier 2: 聚合分区 type_traits ====================
           cc("type_traits/type_traits.cc", "type_traits", AGGREGATES["type_traits"])
 
-          # ==================== Tier 3: functional 子分区 (依赖 type_traits) ====================
+          # ==================== Tier 3: 聚合分区 utility ====================
+          cc("utility/utility.cc", "utility", AGGREGATES["utility"])
+
+          # ==================== Tier 4: memory 子分区（依赖 utility） ====================
+          cc("memory/autorelease_pool.cc", "memory.autorelease_pool", ["memory.comparator", "utility"])
+
+          # ==================== Tier 5: 聚合分区 memory ====================
+          cc("memory/memory.cc", "memory", AGGREGATES["memory"])
+
+          # ==================== Tier 6: functional 子分区（依赖 utility, type_traits） ====================
           cc("functional/function_ref.cc", "functional.function_ref", ["functional.elide", "type_traits"])
           cc("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
           cc("functional/regular_return.cc", "functional.regular_return", ["utility"])
           cc("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
-          cc("memory/autorelease_pool.cc", "memory.autorelease_pool", ["memory.comparator", "utility"])
           cc("utility/covariant_value.cc", "utility.covariant_value", ["type_traits", "utility.facade"])
 
-          # ==================== Tier 4: 其他聚合分区 ====================
-          cc("utility/utility.cc", "utility", AGGREGATES["utility"])
-          cc("memory/memory.cc", "memory", AGGREGATES["memory"])
+          # ==================== Tier 7: 聚合分区 functional ====================
           cc("functional/functional.cc", "functional", AGGREGATES["functional"])
 
-          # ==================== Tier 5: 依赖聚合分区的分区 ====================
+          # ==================== Tier 8: 依赖聚合分区的分区 ====================
+          cc("platform/lockable.cc", "platform.lockable", ["utility"])
+          cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable"])
+          cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
           cc("container/sealed_map.cc", "container.sealed_map", [
               "utility", "functional", "type_traits", "utility.string", "functional.elide",
               "utility.constant_wrapper", "utility.ranges", "type_traits.function_traits",
@@ -365,11 +374,8 @@ jobs:
               "functional.function_ref", "type_traits.type_of", "functional.function_constant",
               "type_traits.type_pack", "utility.covariant_value", "utility.hash"
           ])
-          cc("platform/lockable.cc", "platform.lockable", ["utility"])
-          cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable"])
-          cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
 
-          # ==================== Tier 6: 主模块 _module.cc ====================
+          # ==================== Tier 9: 主模块 _module.cc ====================
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
           for pname, ppath in compiled.items():
