@@ -9,16 +9,15 @@ set_policy("build.c++.modules", true)
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
--- 头文件路径（新增 auto_js/napi 相关路径）
+-- 全局头文件路径
 add_includedirs("packages/utility/include")
 add_includedirs("/tmp/host-boost-headers")
 add_includedirs("packages/third_party/nodejs/deps/nodejs/24.15.0/include/node")
 add_includedirs("packages/third_party/v8/deps/nodejs/24.15.0/include/node")
 add_includedirs("packages/third_party/v8")
 add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
--- 添加 auto_js/napi 相关目录，用于找到 napi_js_initialize.h 等文件
-add_includedirs("packages/auto_js/napi")
-add_includedirs("packages/auto_js/napi/support")
+-- 关键：napi_js_initialize.h 所在目录
+add_includedirs("packages/auto_js/napi/include")
 
 add_linkdirs("deps/javet")
 
@@ -32,7 +31,7 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 排除规则：仅删除 test/ 目录下的文件，保留 node_modules（项目包链接）
+-- 排除测试文件（保留 node_modules）
 function exclude_tests()
     remove_files("packages/*/test/**")
     remove_files("packages/*/tests/**")
@@ -67,6 +66,8 @@ target("napi_js")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8")
     add_files("packages/auto_js/napi/**.cc")
     exclude_tests()
+    -- 公开头文件路径给依赖者
+    add_includedirs("packages/auto_js/napi/include", {public = true})
 
 target("v8_js")
     set_kind("static")
@@ -86,6 +87,8 @@ target("backend_napi_v8")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8", "napi_js", "v8_js", "isolated_vm")
     add_files("packages/backend_napi_v8/**.cc")
     exclude_tests()
+    -- 确保本目标也能找到 napi 头文件
+    add_includedirs("packages/auto_js/napi/include")
     add_links("javet-node-android-i18n")
     if is_plat("android") then
         add_links("uv", "android", "log", "EGL", "GLESv2", "OpenSLES")
