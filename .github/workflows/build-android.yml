@@ -192,21 +192,15 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复编译参数及源码（不触及 -Werror）
+      - name: 修复源码与编译参数（正确处理 import std 位置）
         shell: bash
         run: |
-          echo "修复 build.ninja 和源码..."
+          echo "修复源码中的 import std 和 build.ninja 编译参数..."
 
-          # 1. 仅删除明确不兼容的标志，绝不动 -Werror 和 -Werror=format-security
-          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
+          # 1. 删除所有 import std; 行
+          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建假的 bits/stdc++.h 放在 NDK 的 C++ 头文件路径下
+          # 2. 创建 bits/stdc++.h 放到 NDK 的 C++ 头文件搜索路径
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -260,13 +254,19 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 3. 处理源码中的 import std：
-          #    - 在文件最顶部插入 #include <bits/stdc++.h>
-          #    - 删除原有的 import std; 语句
-          find packages -name '*.cc' -exec sed -i '1i\#include <bits/stdc++.h>' {} \;
-          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+          # 3. 在每个 .cc 文件中，找到 `module;` 并在其下方插入 #include <bits/stdc++.h>
+          find packages -name '*.cc' -exec sed -i '/^module;$/a\#include <bits/stdc++.h>' {} \;
 
-          # 4. 注入 Boost 头文件路径到所有 clang++ 命令中
+          # 4. 清理 build.ninja 中的不兼容标志
+          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
+
+          # 5. 注入 Boost 头文件路径到所有 clang++ 命令
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
