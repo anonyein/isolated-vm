@@ -199,11 +199,11 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 动态生成 bits/stdc++.h（包含缺失的 stop_token 和 source_location 兼容代码）
+          # 2. 动态生成 bits/stdc++.h，使用 __has_include 保证兼容性
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
 
-          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER_BASE'
+          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
           #include <cstdlib>
           #include <cstdint>
           #include <cstddef>
@@ -252,13 +252,10 @@ jobs:
           #include <ranges>
           #include <bit>
           #include <version>
-          STD_HEADER_BASE
 
-          # 补充 stop_token 支持
-          if [ -f "$NDK_CXX_HEADERS/stop_token" ]; then
-            echo "#include <stop_token>" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
-          else
-            cat >> "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STOP_TOKEN_STUB'
+          #if __has_include(<stop_token>)
+          #include <stop_token>
+          #else
           namespace std {
               class stop_token {};
               class stop_source {
@@ -266,19 +263,14 @@ jobs:
                   stop_token get_token() const { return stop_token(); }
               };
           }
-          STOP_TOKEN_STUB
-          fi
+          #endif
 
-          # 补充 source_location 支持
-          if [ -f "$NDK_CXX_HEADERS/source_location" ]; then
-            echo "#include <source_location>" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
-          elif [ -f "$NDK_CXX_HEADERS/experimental/source_location" ]; then
-            cat >> "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'SRC_LOC_STUB'
+          #if __has_include(<source_location>)
+          #include <source_location>
+          #elif __has_include(<experimental/source_location>)
           #include <experimental/source_location>
           namespace std { using std::experimental::source_location; }
-          SRC_LOC_STUB
-          else
-            cat >> "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'SRC_LOC_STUB2'
+          #else
           namespace std {
               class source_location {
               public:
@@ -286,8 +278,8 @@ jobs:
                   const char* function_name() const noexcept { return "unknown"; }
               };
           }
-          SRC_LOC_STUB2
-          fi
+          #endif
+          STD_HEADER
 
           # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
