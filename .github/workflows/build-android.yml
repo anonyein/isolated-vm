@@ -126,13 +126,80 @@ jobs:
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      # 在 CMake 配置前，彻底删除源码中的模块关键字，并创建所需头文件
-      - name: 预修改源码：删除模块语法，替换 import std
+      - name: 移除不兼容的 CMake 属性和平台限制
+        run: |
+          find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/Unknown host platform/s/^/#/' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
+
+      - name: 配置 CMake
         shell: bash
         run: |
-          echo "物理删除模块声明和导入..."
+          mkdir -p fake-boost/lib/cmake/Boost
+          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
+          add_library(Boost::boost INTERFACE IMPORTED)
+          set_target_properties(Boost::boost PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
+          )
+          set(Boost_FOUND TRUE)
+          set(Boost_INCLUDE_DIRS /usr/include)
+          set(Boost_LIBRARIES "")
+          set(Boost_VERSION 1.83.0)
+          BOOST_EOF
+          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'BOOST_VER_EOF'
+          set(PACKAGE_VERSION 1.83.0)
+          set(PACKAGE_VERSION_COMPATIBLE TRUE)
+          BOOST_VER_EOF
 
-          # 创建 bits/stdc++.h
+          mkdir -p "${PWD}/build/module_cache"
+
+          cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
+          include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
+          set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
+          set(ANDROID_STL c++_shared)
+          set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
+          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
+          NDK_EOF
+
+          AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
+          V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
+
+          cmake \
+            -S "${PWD}" \
+            -B "${PWD}/build" \
+            -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
+            -DCMAKE_TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
+            -DANDROID_STL=c++_shared \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MAKE_PROGRAM=ninja \
+            -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
+            -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
+            -DV8_LIBRARY_TYPE=shared \
+            -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
+            -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
+            -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
+            -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
+            -DIVM_INSTALL=copy \
+            -G Ninja
+
+      - name: 修复源码与编译参数
+        shell: bash
+        run: |
+          echo "修复源码中的 import std 和模块结构..."
+
+          # 0. 精准修复 elide.cc 的 GCC 扩展语法
+          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+
+          # 1. 删除所有 import std; 行
+          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+
+          # 2. 创建 bits/stdc++.h（包含 <condition_variable>）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -147,6 +214,7 @@ jobs:
           #include <array>
           #include <chrono>
           #include <concepts>
+          #include <condition_variable>
           #include <deque>
           #include <exception>
           #include <forward_list>
@@ -190,103 +258,30 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 1. 删除所有 import std; 行，并用 #include 替换（避免遗留空行）
-          find packages -name '*.cc' -exec sed -i '/^import std;$/c\#include <bits/stdc++.h>' {} \;
+          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
+          find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
-          # 2. 彻底删除模块声明行
-          find packages -name '*.cc' -exec sed -i '/^module;/d' {} \;
-          find packages -name '*.cc' -exec sed -i '/^export module/d' {} \;
+          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
+          for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
+            if ! grep -q '^module;$' "$f"; then
+              sed -i '1i\module;' "$f"
+              sed -i '2i\#include <bits/stdc++.h>' "$f"
+            fi
+          done
 
-          # 3. 彻底删除模块导入行
-          find packages -name '*.cc' -exec sed -i '/^import :/d' {} \;
-          find packages -name '*.cc' -exec sed -i '/^import [^:]/d' {} \;
+          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
+          find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
 
-          # 4. 修复 elide.cc 的 GCC 扩展语法
-          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
-          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+          # 6. 对于既无 module; 也无 export module 的文件，在开头插入 #include
+          find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
 
-          echo "源码修改完成"
-
-      # 关键步骤：清除 CMakeLists.txt 中的模块属性，避免 CMake 标记 CXX_MODULES
-      - name: 移除 CMake 模块属性及平台限制
-        run: |
-          # 删除所有与 CXX_MODULES、CXX_MODULE 相关的行
-          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULES/d' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE/d' {} \;
-          # 删除 LINKER_TYPE、CXX_MODULE_STD 等
-          find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
-          # 注释平台限制
-          find . -name "CMakeLists.txt" -exec sed -i '/Unknown host platform/s/^/#/' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
-
-      - name: 配置 CMake（不再检测到模块）
-        shell: bash
-        run: |
-          mkdir -p fake-boost/lib/cmake/Boost
-          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
-          add_library(Boost::boost INTERFACE IMPORTED)
-          set_target_properties(Boost::boost PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
-          )
-          set(Boost_FOUND TRUE)
-          set(Boost_INCLUDE_DIRS /usr/include)
-          set(Boost_LIBRARIES "")
-          set(Boost_VERSION 1.83.0)
-          BOOST_EOF
-          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'BOOST_VER_EOF'
-          set(PACKAGE_VERSION 1.83.0)
-          set(PACKAGE_VERSION_COMPATIBLE TRUE)
-          BOOST_VER_EOF
-
-          cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
-          include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
-          set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
-          set(ANDROID_STL c++_shared)
-          set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable module scanning" FORCE)
-          set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "Disable std modules" FORCE)
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
-          NDK_EOF
-
-          AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
-          V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
-
-          cmake \
-            -S "${PWD}" \
-            -B "${PWD}/build" \
-            -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
-            -DCMAKE_TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake" \
-            -DANDROID_ABI="${{ matrix.abi }}" \
-            -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
-            -DANDROID_STL=c++_shared \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_MAKE_PROGRAM=ninja \
-            -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
-            -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
-            -DV8_LIBRARY_TYPE=shared \
-            -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
-            -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
-            -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
-            -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
-            -DIVM_INSTALL=copy \
-            -G Ninja
-
-      - name: 修复编译参数（清理残留不兼容标志，注入 Boost 路径）
-        shell: bash
-        run: |
-          echo "清理 build.ninja 中的不兼容标志..."
-
+          # 7. 严格清理 build.ninja 中不兼容的标志，但保留模块支持标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
+          # 不删除 -fimplicit-module-maps、-fimplicit-modules、-fmodules-cache-path，以支持模块依赖扫描
 
-          # 确保注入 Boost 路径
+          # 8. 注入 Boost 头文件路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
