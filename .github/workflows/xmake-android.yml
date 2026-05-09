@@ -118,7 +118,7 @@ jobs:
           unzip -q ndk.zip -d /tmp
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
 
-      - name: 修复源码（bits/stdc++.h 及 elide.cc）
+      - name: 修复源码（bits/stdc++.h 及 elide.cc，以及所有模块文件）
         shell: bash
         run: |
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
@@ -181,15 +181,17 @@ jobs:
 
           # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-          # 模块文件处理
-          for f in $(grep -rl 'module util' packages/); do
+
+          # 处理所有包含 'module ' 的文件（不限于 util）
+          for f in $(grep -rl 'module ' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
             sed -i '1i\module;' "$f"
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
-          # 非模块文件处理
-          for f in $(find packages -name '*.cc' -exec grep -L 'module util' {} \;); do
+
+          # 非模块文件：直接在第一行插入
+          for f in $(find packages -name '*.cc' -exec grep -L 'module ' {} \;); do
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
