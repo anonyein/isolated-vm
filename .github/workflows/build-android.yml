@@ -258,14 +258,26 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 为 regular_return.cc 和 bind.cc 添加缺失的分区导入（放在 export module 之后）
+          # regular_return.cc 和 bind.cc 需要 type_traits.transform
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
           done
-          # bind.cc 还需要 function_traits 和 type_traits 聚合分区
+          # bind.cc 额外需要 function_traits 和 type_traits 聚合分区
           sed -i '/^export module util:functional\.bind;$/a\import :type_traits.function_traits;' packages/utility/functional/bind.cc
           sed -i '/^export module util:functional\.bind;$/a\import :type_traits;' packages/utility/functional/bind.cc
+
+          # lockable.cc 需要 type_traits.type_of 和 utility
+          sed -i '/^export module util:platform\.lockable;$/a\import :type_traits.type_of;' packages/utility/platform/lockable.cc
+
+          # stop_token.cc 需要 functional（可能已有，但确认一下）
+          sed -i '/^export module util:platform\.stop_token;$/a\import :functional;' packages/utility/platform/stop_token.cc
+
+          # timer.cc 需要 functional 和 lockable
+          sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
+          sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
+
+          # container/sealed_map.cc 可能需要 functional 等，但之前已处理
 
       - name: 清理 ninja 中的不兼容标志
         run: |
