@@ -192,20 +192,16 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码与编译参数（处理 import std、模块结构、语法修复）
+      - name: 修复源码与编译参数（处理 import std、模块结构、Clang 不兼容语法）
         shell: bash
         run: |
-          echo "修复源码中的 import std、模块结构和语法问题..."
+          echo "修复源码中的 import std、模块结构和 Clang 兼容性问题..."
 
-          # 0. 修复结构化绑定包展开的语法错误（针对 elide.cc）
-          # 删除非法行 auto [...args] = std::move(args_);
+          # ===== 0. 精准修复 elide.cc 的 GCC 扩展语法 =====
+          # 删除非法行: auto [...args] = std::move(args_);
           sed -i '/auto \[\.\.\.args\] = std::move(args_);/d' packages/utility/functional/elide.cc
-          # 将下一行中的 std::move(args)... 替换为正确的转发
-          sed -i 's/std::move(args)/std::forward<Args>(args_)/g' packages/utility/functional/elide.cc
-          echo "修复源码中的 import std、模块结构和语法问题..."
-
-          # 0. 修复结构化绑定包展开的语法错误：[... args ] -> [...args]
-          find packages -name '*.cc' -exec sed -i 's/\[\.\.\. \([a-zA-Z_][a-zA-Z0-9_]*\) \]/[...\1]/g' {} \;
+          # 替换下一行中的 std::move(args)... 为标准转发
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
