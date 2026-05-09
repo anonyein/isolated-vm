@@ -274,7 +274,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 精确顺序编译 utility 模块（已分析依赖）
+      - name: 完整拓扑排序编译 utility 模块（分析后的精确依赖）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -295,95 +295,85 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          compiled_pcm = {}
+          compiled = {}
 
-          def compile_part(rel_path, part_name=None, deps=None):
-              src = os.path.join(UTIL_DIR, rel_path)
-              deps = deps or []
-              pcm_path = os.path.join(PCM_DIR, f"util-{part_name}.pcm") if part_name else None
-              obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+          def cc(rel, part=None, deps=None):
+              src = os.path.join(UTIL_DIR, rel)
+              pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
+              obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
-              extra_pcms = []
-              for dep in deps:
-                  if dep in compiled_pcm:
-                      extra_pcms.append(f"-fmodule-file=util:{dep}={compiled_pcm[dep]}")
+              extra = []
+              for d in (deps or []):
+                  if d in compiled:
+                      extra.append(f"-fmodule-file=util:{d}={compiled[d]}")
 
-              if pcm_path:
-                  cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra_pcms
-                  print(f"PCM: {part_name}")
-                  subprocess.run(cmd_pcm, check=True)
-                  compiled_pcm[part_name] = pcm_path
+              if pcm:
+                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
+                  print(f"PCM: {part}")
+                  subprocess.run(cmd, check=True)
+                  compiled[part] = pcm
 
-              cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra_pcms
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
-              subprocess.run(cmd_obj, check=True)
+              subprocess.run(cmd, check=True)
 
-          # === Tier 0: 无内部模块依赖的叶子分区 ===
-          compile_part("type_traits/transform.cc", "type_traits.transform")
-          compile_part("type_traits/type_of.cc", "type_traits.type_of")
-          compile_part("functional/elide.cc", "functional.elide")
-          compile_part("functional/flat_tuple.cc", "functional.flat_tuple")
-          compile_part("memory/memory.cc", "memory")
-          compile_part("memory/comparator.cc", "memory.comparator")
-          compile_part("memory/noinit_allocator.cc", "memory.noinit_allocator")
-          compile_part("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
-          compile_part("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
-          compile_part("container/tinker_queue.cc", "container.tinker_queue")
-          compile_part("utility/constant_wrapper.cc", "utility.constant_wrapper")
-          compile_part("utility/ranges.cc", "utility.ranges")
-          compile_part("utility/hash.cc", "utility.hash")
-          compile_part("utility/facade.cc", "utility.facade")
-          compile_part("utility/string.cc", "utility.string")
-          compile_part("utility/covariant_value.cc", "utility.covariant_value", ["utility.facade"])
+          # ==================== Tier 0: 叶子分区（无内部依赖） ====================
+          cc("type_traits/transform.cc", "type_traits.transform")
+          cc("type_traits/type_of.cc", "type_traits.type_of")
+          cc("functional/elide.cc", "functional.elide")
+          cc("functional/flat_tuple.cc", "functional.flat_tuple")
+          cc("memory/comparator.cc", "memory.comparator")
+          cc("memory/noinit_allocator.cc", "memory.noinit_allocator")
+          cc("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
+          cc("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
+          cc("container/tinker_queue.cc", "container.tinker_queue")
+          cc("utility/constant_wrapper.cc", "utility.constant_wrapper")
+          cc("utility/facade.cc", "utility.facade")
+          cc("utility/hash.cc", "utility.hash")
+          cc("utility/ranges.cc", "utility.ranges")
+          cc("platform/timer.h.cc", "platform.timer")
 
-          # === Tier 1: 聚合分区 utility ===
-          compile_part("utility/utility.cc", "utility", [
-              "utility.constant_wrapper", "utility.covariant_value",
-              "utility.facade", "utility.hash", "utility.ranges",
-              "utility.string"
-          ])
+          # ==================== Tier 1: 依赖 Tier 0 的分区 ====================
+          cc("type_traits/type_pack.cc", "type_traits.type_pack", ["type_traits.type_of"])
+          cc("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
+          cc("utility/string.cc", "utility.string", ["utility.constant_wrapper"])
+          cc("functional/function_ref.cc", "functional.function_ref", ["functional.elide", "type_traits"])
+          cc("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
+          cc("functional/regular_return.cc", "functional.regular_return")
+          cc("platform/lockable.cc", "platform.lockable")
 
-          # === Tier 1.5: 依赖 utility 的分区 ===
-          compile_part("functional/regular_return.cc", "functional.regular_return", ["utility"])
-          compile_part("type_traits/type_pack.cc", "type_traits.type_pack", ["type_traits.type_of"])
-          compile_part("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
-          compile_part("type_traits/type_traits.cc", "type_traits", [
-              "type_traits.type_of", "type_traits.type_pack",
-              "type_traits.function_traits", "type_traits.transform"
-          ])
-          compile_part("functional/function_ref.cc", "functional.function_ref", ["functional.elide"])
-          compile_part("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
-          compile_part("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
-          compile_part("platform/lockable.cc", "platform.lockable", ["utility"])
+          # ==================== Tier 2: 依赖 Tier 1 的分区 ====================
+          cc("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
+          cc("memory/autorelease_pool.cc", "memory.autorelease_pool", ["memory.comparator", "utility"])
+          cc("utility/covariant_value.cc", "utility.covariant_value", ["type_traits", "utility.facade"])
+          cc("container/sealed_map.cc", "container.sealed_map", ["functional"])
 
-          # === Tier 2: 聚合分区 functional ===
-          functional_subs = [
-              "functional.bind", "functional.elide",
-              "functional.function_constant", "functional.function_ref",
-              "functional.regular_return"
-          ]
-          compile_part("functional/functional.cc", "functional", functional_subs)
+          # ==================== Tier 3: 聚合分区 ====================
+          # type_traits 聚合分区
+          type_traits_subs = ["type_traits.function_traits", "type_traits.transform", "type_traits.type_of", "type_traits.type_pack"]
+          cc("type_traits/type_traits.cc", "type_traits", type_traits_subs)
 
-          # === Tier 3: 依赖 functional 的分区 ===
-          compile_part("platform/timer.cc", "platform.timer", ["functional"])
-          compile_part("container/sealed_map.cc", "container.sealed_map", [
-              "utility.string", "functional.elide", "utility.constant_wrapper",
-              "utility.ranges", "type_traits.function_traits", "type_traits.transform",
-              "utility.facade", "functional.flat_tuple", "type_traits",
-              "functional.function_ref", "type_traits.type_of",
-              "functional.function_constant", "type_traits.type_pack",
-              "utility.covariant_value", "utility.hash", "functional", "utility"
-          ])
-          compile_part("platform/stop_token.cc", "platform.stop_token", [
-              "functional", "functional.elide", "functional.function_constant",
-              "functional.function_ref"
-          ])
+          # utility 聚合分区
+          utility_subs = ["utility.constant_wrapper", "utility.covariant_value", "utility.facade", "utility.hash", "utility.ranges", "utility.string"]
+          cc("utility/utility.cc", "utility", utility_subs)
 
-          # === Tier 4: 主模块 _module.cc ===
-          primary_src = os.path.join(UTIL_DIR, "_module.cc")
+          # memory 聚合分区
+          memory_subs = ["memory.autorelease_pool", "memory.comparator", "memory.noinit_allocator"]
+          cc("memory/memory.cc", "memory", memory_subs)
+
+          # functional 聚合分区
+          functional_subs = ["functional.bind", "functional.elide", "functional.function_constant", "functional.function_ref", "functional.regular_return"]
+          cc("functional/functional.cc", "functional", functional_subs)
+
+          # ==================== Tier 4: 依赖聚合分区的分区 ====================
+          cc("platform/timer.cc", "platform.timer", ["functional", "platform.lockable", "platform.timer"])
+          cc("platform/stop_token.cc", "platform.stop_token", ["functional"])
+
+          # ==================== Tier 5: 主模块 _module.cc ====================
+          cc("_module.cc")
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
-          for pname, ppath in compiled_pcm.items():
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
+          for pname, ppath in compiled.items():
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("主模块 PCM: util")
           subprocess.run(cmd, check=True)
