@@ -287,6 +287,28 @@ jobs:
 
           echo "修复完成"
 
+      - name: 手动预编译缺失的模块分区文件
+        shell: bash
+        working-directory: ${{ github.workspace }}/build
+        run: |
+          echo "尝试手动预编译模块分区文件..."
+          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
+          # 从 ninja 中提取完整编译命令并执行
+          for src in \
+            packages/utility/type_traits/transform.cc \
+            packages/utility/type_traits/type_of.cc \
+            packages/utility/type_traits/function_traits.cc
+          do
+            cmd=$(ninja -t commands | grep -F "$src" | head -1)
+            if [ -n "$cmd" ]; then
+              echo "执行: $cmd"
+              bash -c "$cmd" 2>&1 | tail -5
+            else
+              echo "警告: 未找到 $src 的构建命令"
+            fi
+          done
+          echo "手动编译完成，继续 ninja 构建"
+
       - name: 构建
         run: ninja -C build backend_napi_v8 || echo "构建失败，请将日志提交给 isolated-vm 项目。"
 
