@@ -192,17 +192,18 @@ jobs:
         run: |
           echo "修复源码中的 import std、模块结构和兼容性问题..."
 
-          # ===== 0. 精准修复 elide.cc 的 GCC 扩展语法 =====
+          # 0. 精准修复 elide.cc 的 GCC 扩展语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h（动态处理 stop_token）
+          # 2. 动态生成 bits/stdc++.h（包含缺失的 stop_token 和 source_location 兼容代码）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
-          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
+
+          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER_BASE'
           #include <cstdlib>
           #include <cstdint>
           #include <cstddef>
@@ -251,17 +252,44 @@ jobs:
           #include <ranges>
           #include <bit>
           #include <version>
-          STD_HEADER
+          STD_HEADER_BASE
 
-          # 动态添加 stop_token 支持
-          STOP_TOKEN_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1/stop_token"
-          if [ -f "$STOP_TOKEN_PATH" ]; then
+          # 补充 stop_token 支持
+          if [ -f "$NDK_CXX_HEADERS/stop_token" ]; then
             echo "#include <stop_token>" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
           else
-            echo "namespace std { class stop_source; class stop_token; }" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
+            cat >> "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STOP_TOKEN_STUB'
+          namespace std {
+              class stop_token {};
+              class stop_source {
+              public:
+                  stop_token get_token() const { return stop_token(); }
+              };
+          }
+          STOP_TOKEN_STUB
           fi
 
-          # 3. 清除之前可能插入的 #include <bits/stdc++.h> 行
+          # 补充 source_location 支持
+          if [ -f "$NDK_CXX_HEADERS/source_location" ]; then
+            echo "#include <source_location>" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
+          elif [ -f "$NDK_CXX_HEADERS/experimental/source_location" ]; then
+            cat >> "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'SRC_LOC_STUB'
+          #include <experimental/source_location>
+          namespace std { using std::experimental::source_location; }
+          SRC_LOC_STUB
+          else
+            cat >> "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'SRC_LOC_STUB2'
+          namespace std {
+              class source_location {
+              public:
+                  static source_location current() noexcept { return source_location(); }
+                  const char* function_name() const noexcept { return "unknown"; }
+              };
+          }
+          SRC_LOC_STUB2
+          fi
+
+          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
           # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
