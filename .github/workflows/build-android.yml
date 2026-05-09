@@ -267,11 +267,11 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 拓扑排序编译 utility 模块（确保聚合分区必编译）
+      - name: 硬编码顺序编译 utility 模块（分析后的精确依赖）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
-          import os, subprocess, re, glob, collections
+          import os, subprocess
 
           SRC_ROOT = os.getcwd()
           BUILD_DIR = os.path.join(SRC_ROOT, "build")
@@ -288,124 +288,78 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          cc_files = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
-          partitions = {}
-          imports_map = {}
-          aggregate_subs = {}   # 聚合分区 -> 其子分区列表
-          no_partition = []
-          primary_src = None
-
-          for f in cc_files:
-              with open(f) as fh:
-                  content = fh.read()
-              m = re.search(r'export module util:([\w.]+)', content)
-              if m:
-                  part = m.group(1)
-                  partitions[part] = f
-                  imports = re.findall(r'import :([\w.]+)', content)
-                  imports_map[part] = imports
-                  exports = re.findall(r'export import :([\w.]+)', content)
-                  if exports:
-                      aggregate_subs[part] = exports
-              elif re.search(r'export module util;', content):
-                  primary_src = f
-              else:
-                  no_partition.append(f)
-
-          # 构建依赖图（带重复边检查）
-          graph = collections.defaultdict(list)
-          indegree = collections.defaultdict(int)
-          added_edges = set()
-
-          def add_edge(src, dst):
-              if (src, dst) not in added_edges:
-                  graph[src].append(dst)
-                  indegree[dst] += 1
-                  added_edges.add((src, dst))
-
-          for part, implist in imports_map.items():
-              indegree.setdefault(part, 0)
-              for imp in implist:
-                  if imp in partitions:
-                      add_edge(imp, part)
-
-          # 聚合分区应在其子分区之后
-          for agg_part, subs in aggregate_subs.items():
-              indegree.setdefault(agg_part, 0)
-              for sub in subs:
-                  if sub in partitions:
-                      add_edge(sub, agg_part)
-
-          # 拓扑排序
-          queue = [p for p in partitions if indegree[p] == 0]
-          sorted_parts = []
-          while queue:
-              p = queue.pop(0)
-              sorted_parts.append(p)
-              for nxt in graph[p]:
-                  indegree[nxt] -= 1
-                  if indegree[nxt] == 0:
-                      queue.append(nxt)
-          # 补全未纳入排序的分区
-          sorted_set = set(sorted_parts)
-          for p in partitions:
-              if p not in sorted_set:
-                  sorted_parts.append(p)
-
           compiled_pcm = {}
 
-          def compile_partition(part):
-              if part in compiled_pcm:
-                  return
-              src = partitions[part]
-              pcm_path = os.path.join(PCM_DIR, f"util-{part}.pcm")
+          def compile_part(rel_path, part_name=None, deps=None):
+              src = os.path.join(UTIL_DIR, rel_path)
+              if deps is None:
+                  deps = []
+              pcm_path = os.path.join(PCM_DIR, f"util-{part_name}.pcm") if part_name else None
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-              imports = imports_map.get(part, [])
 
               extra_pcms = []
-              for imp in imports:
-                  if imp in compiled_pcm:
-                      extra_pcms.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
-                      if imp in aggregate_subs:
-                          for sdep in aggregate_subs[imp]:
-                              if sdep in compiled_pcm:
-                                  flag = f"-fmodule-file=util:{sdep}={compiled_pcm[sdep]}"
-                                  if flag not in extra_pcms:
-                                      extra_pcms.append(flag)
+              for dep in deps:
+                  if dep in compiled_pcm:
+                      extra_pcms.append(f"-fmodule-file=util:{dep}={compiled_pcm[dep]}")
 
-              # 生成 PCM
-              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra_pcms
-              print(f"PCM: {part}")
-              subprocess.run(cmd_pcm, check=True)
-              compiled_pcm[part] = pcm_path
+              if pcm_path:
+                  cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra_pcms
+                  print(f"PCM: {part_name}")
+                  subprocess.run(cmd_pcm, check=True)
+                  compiled_pcm[part_name] = pcm_path
 
-              # 生成对象文件
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra_pcms
+              print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd_obj, check=True)
 
-          # 严格按照拓扑顺序编译所有分区
-          for part in sorted_parts:
-              compile_partition(part)
+          # === Tier 0: 无内部模块依赖的叶子分区 ===
+          compile_part("utility/utility.cc", "utility")
+          compile_part("type_traits/transform.cc", "type_traits.transform")
+          compile_part("type_traits/type_of.cc", "type_traits.type_of")
+          compile_part("functional/elide.cc", "functional.elide")
+          compile_part("functional/flat_tuple.cc", "functional.flat_tuple")
+          compile_part("functional/regular_return.cc", "functional.regular_return", ["utility"])
+          compile_part("type_traits/type_pack.cc", "type_traits.type_pack", ["type_traits.type_of"])
+          compile_part("platform/timer.cc", "platform.timer")
+          compile_part("memory/memory.cc", "memory")
+          compile_part("memory/comparator.cc", "memory.comparator")
+          compile_part("memory/noinit_allocator.cc", "memory.noinit_allocator")
+          compile_part("utility/ranges.cc", "utility.ranges")
+          compile_part("utility/constant_wrapper.cc", "utility.constant_wrapper")
+          compile_part("utility/hash.cc", "utility.hash")
+          compile_part("utility/facade.cc", "utility.facade")
+          compile_part("utility/string.cc", "utility.string")
+          compile_part("utility/covariant_value.cc", "utility.covariant_value", ["utility.facade"])
+          compile_part("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
+          compile_part("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
+          compile_part("container/tinker_queue.cc", "container.tinker_queue")
 
-          # ---- 兜底：确保所有聚合分区都已被编译 ----
-          for agg_part in aggregate_subs:
-              if agg_part not in compiled_pcm:
-                  print(f"补编译聚合分区: {agg_part}")
-                  compile_partition(agg_part)
+          # === Tier 1: 依赖 Tier 0 的分区 ===
+          compile_part("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
+          compile_part("functional/function_ref.cc", "functional.function_ref", ["functional.elide"])
+          compile_part("functional/function_constant.cc", "functional.function_constant", ["type_traits"])
+          compile_part("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
+          compile_part("type_traits/type_traits.cc", "type_traits", ["type_traits.type_of", "type_traits.type_pack", "type_traits.function_traits", "type_traits.transform"])
+          compile_part("platform/stop_token.cc", "platform.stop_token")
+          compile_part("platform/lockable.cc", "platform.lockable", ["utility"])
+          compile_part("container/sealed_map.cc", "container.sealed_map", ["utility.string", "functional.elide", "utility.constant_wrapper", "utility.ranges", "type_traits.function_traits", "type_traits.transform", "utility.facade", "functional.flat_tuple", "type_traits", "functional.function_ref", "type_traits.type_of", "functional.function_constant", "type_traits.type_pack", "utility.covariant_value", "utility.hash"])
 
-          # 主模块 PCM
-          if primary_src:
-              main_pcm = os.path.join(PCM_DIR, "util.pcm")
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
-              for pname, ppath in compiled_pcm.items():
-                  cmd.append(f"-fmodule-file=util:{pname}={ppath}")
-              print("主模块 PCM: util")
-              subprocess.run(cmd, check=True)
+          # === Tier 2: 聚合分区 functional ===
+          functional_subs = [
+              "functional.bind", "functional.elide",
+              "functional.function_constant", "functional.function_ref",
+              "functional.regular_return"
+          ]
+          compile_part("functional/functional.cc", "functional", functional_subs)
 
-          # 编译无模块文件
-          for src in no_partition:
-              obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj], check=True)
+          # === Tier 3: 主模块 _module.cc ===
+          primary_src = os.path.join(UTIL_DIR, "_module.cc")
+          main_pcm = os.path.join(PCM_DIR, "util.pcm")
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", primary_src, "-o", main_pcm]
+          for pname, ppath in compiled_pcm.items():
+              cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+          print("主模块 PCM: util")
+          subprocess.run(cmd, check=True)
 
           print("utility 模块编译完成")
 
