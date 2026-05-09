@@ -126,13 +126,13 @@ jobs:
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      # ★ 新增：在 CMake 配置前修改源码，彻底禁用 C++20 模块语法
+      # ★ 在 CMake 配置前修改源码
       - name: 预修改源码：禁用模块语法，替换 import std
         shell: bash
         run: |
           echo "预修改源码：隐藏模块声明，替换 import std..."
 
-          # 0. 创建 bits/stdc++.h（包含所有需要的标准库头文件）
+          # 创建 bits/stdc++.h
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -190,18 +190,18 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 1. 替换所有 import std; 为 #include <bits/stdc++.h>
+          # 替换 import std; 为 #include
           find packages -name '*.cc' -exec sed -i '/^import std;$/c\#include <bits/stdc++.h>' {} \;
 
-          # 2. 注释掉所有模块声明（module; 和 export module ...）
+          # 注释掉 module; 和 export module ...
           find packages -name '*.cc' -exec sed -i 's/^module;$/\/\/ module;/g' {} \;
           find packages -name '*.cc' -exec sed -i 's/^export module \(.*\);/\/\/ export module \1;/g' {} \;
 
-          # 3. 注释掉所有模块导入语句（import :partition; 和 import module;）
+          # 注释掉 import 语句
           find packages -name '*.cc' -exec sed -i 's/^import :\(.*\);/\/\/ import :\1;/g' {} \;
           find packages -name '*.cc' -exec sed -i 's/^import \([^:]*\);$/\/\/ import \1;/g' {} \;
 
-          # 4. 修复 elide.cc 的 GCC 扩展语法
+          # 修复 elide.cc
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
@@ -215,7 +215,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      - name: 配置 CMake（源码已无模块语法，不会生成模块规则）
+      - name: 配置 CMake
         shell: bash
         run: |
           mkdir -p fake-boost/lib/cmake/Boost
@@ -239,7 +239,6 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 强制关闭模块扫描与标准模块，确保 CMake 不生成模块规则
           set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable module scanning" FORCE)
           set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "Disable std modules" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
@@ -268,12 +267,24 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复编译参数（清理残留不兼容标志，注入 Boost 路径）
+      - name: 修复编译参数（删除残留模块规则，注入 Boost 路径）
         shell: bash
         run: |
-          echo "清理 build.ninja 中的不兼容标志并注入 Boost 路径..."
+          echo "清理 build.ninja 中的模块规则和不兼容标志..."
 
-          # 删除可能由 CMake 注入的不兼容标志
+          # 删除所有 dyndep 规则行（释放模块依赖扫描）
+          sed -i '/dyndep/d' build/build.ninja
+
+          # 删除所有 .modmap 文件引用
+          sed -i 's/ @[^ ]*\.modmap//g' build/build.ninja
+
+          # 将残留的 CXX_MODULES 替换为 CXX
+          sed -i 's/CXX_MODULES/CXX/g' build/build.ninja
+
+          # 删除 .pcm 文件引用（如果存在独立行）
+          sed -i '/\.pcm /d' build/build.ninja
+
+          # 清理不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
@@ -282,7 +293,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 注入 Boost 头文件路径（确保依赖扫描也能找到）
+          # 注入 Boost 头文件路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
