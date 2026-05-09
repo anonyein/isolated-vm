@@ -161,7 +161,7 @@ jobs:
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -187,25 +187,106 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复编译参数（清理不兼容标志，注入 Boost 路径）
+      - name: 修复源码与编译参数
         shell: bash
         run: |
-          echo "清理 build.ninja 中的不兼容标志..."
+          echo "修复源码中的 import std、模块结构和兼容性问题..."
 
-          # 1. 删除不兼容标志
+          # 0. 修复 elide.cc 的 GCC 扩展语法
+          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+
+          # 1. 删除所有 import std; 行
+          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+
+          # 2. 创建 bits/stdc++.h（包含所有需要的标准库头文件）
+          NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
+          mkdir -p "${NDK_CXX_HEADERS}/bits"
+          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
+          #include <cstdlib>
+          #include <cstdint>
+          #include <cstddef>
+          #include <cstring>
+          #include <cwchar>
+          #include <cstdio>
+          #include <cassert>
+          #include <algorithm>
+          #include <array>
+          #include <chrono>
+          #include <concepts>
+          #include <deque>
+          #include <exception>
+          #include <forward_list>
+          #include <functional>
+          #include <initializer_list>
+          #include <iomanip>
+          #include <iostream>
+          #include <iterator>
+          #include <limits>
+          #include <list>
+          #include <map>
+          #include <memory>
+          #include <mutex>
+          #include <new>
+          #include <numeric>
+          #include <optional>
+          #include <queue>
+          #include <random>
+          #include <ratio>
+          #include <set>
+          #include <shared_mutex>
+          #include <span>
+          #include <sstream>
+          #include <stack>
+          #include <stdexcept>
+          #include <stop_token>
+          #include <string>
+          #include <string_view>
+          #include <source_location>
+          #include <tuple>
+          #include <type_traits>
+          #include <unordered_map>
+          #include <unordered_set>
+          #include <utility>
+          #include <variant>
+          #include <vector>
+          #include <cmath>
+          #include <compare>
+          #include <ranges>
+          #include <bit>
+          #include <version>
+          STD_HEADER
+
+          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
+          find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
+
+          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
+          for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
+            if ! grep -q '^module;$' "$f"; then
+              sed -i '1i\module;' "$f"
+              sed -i '2i\#include <bits/stdc++.h>' "$f"
+            fi
+          done
+
+          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
+          find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
+
+          # 6. 对于既无 module; 也无 export module 的文件（普通源文件），在开头插入 #include
+          find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
+
+          # 7. 清理 build.ninja 中的不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-fno-implicit-modules//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-module-maps//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 2. 注入 Boost 头文件路径到所有 clang++ 命令（确保依赖扫描也能找到）
+          # 8. 注入 Boost 头文件路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
-
-          # 3. 修复 elide.cc 的 GCC 扩展语法
-          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
-          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
           echo "修复完成"
 
