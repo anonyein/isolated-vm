@@ -283,11 +283,12 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动排序并预编译 utility 模块
+      - name: 自动排序并预编译 utility 模块（按依赖顺序）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
-          import os, subprocess, re, glob
+          import os, subprocess, glob
+
           SRC_ROOT = os.getcwd()
           BUILD_DIR = os.path.join(SRC_ROOT, "build")
           NDK_HOME = "/tmp/android-ndk"
@@ -303,72 +304,46 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          all_cc = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
-
-          def get_module_info(cc_file):
-              with open(cc_file) as f:
-                  content = f.read()
-              has_module = 'export module util' in content or 'module util' in content
-              partition = None
-              m = re.search(r'export module util:([\w.]+)', content)
-              if m:
-                  partition = m.group(1)
-              is_primary = bool(re.search(r'export module util;', content))
-              imports = re.findall(r'import :([\w.]+)', content)
-              return has_module, partition, is_primary, imports
-
-          file_info = {}
-          for f in all_cc:
-              has_mod, part, prim, imp = get_module_info(f)
-              file_info[f] = (has_mod, part, prim, imp)
-
-          compiled = set()
-
-          def compile_one(cc_file):
-              if cc_file in compiled:
-                  return
-              has_mod, part, prim, imports = file_info[cc_file]
-              # 编译依赖的分区或主模块
-              for imp in imports:
-                  for other_file, (om, op, opri, oimp) in file_info.items():
-                      if op == imp:
-                          compile_one(other_file)
-                          break
-              if part:
-                  for other_file, (om, op, opri, oimp) in file_info.items():
-                      if opri:
-                          compile_one(other_file)
-                          break
-
-              basename = os.path.relpath(cc_file, UTIL_DIR).replace("/", ".").replace(".cc", "")
-              obj_path = os.path.join(PCM_DIR, basename + ".o")
-              pcm_path = os.path.join(PCM_DIR, "util" + (f"-{part}" if part else "") + ".pcm")
-
-              # 使用原始 ninja 命令作为基础，但由我们控制顺序
-              # 生成编译命令
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", cc_file, "-o", obj_path]
-              if prim:
-                  # 主模块输出 PCM
-                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", cc_file, "-o", pcm_path]
-              elif part:
-                  # 分区文件需要主模块 PCM
-                  main_pcm = os.path.join(PCM_DIR, "util.pcm")
-                  if os.path.exists(main_pcm):
-                      cmd.append(f"-fmodule-file=util={main_pcm}")
-              # 对于导入其他分区的文件，添加相应 -fmodule-file
-              for imp in imports:
-                  pp = os.path.join(PCM_DIR, f"util-{imp}.pcm")
-                  if os.path.exists(pp):
-                      cmd.append(f"-fmodule-file=util:{imp}={pp}")
-
-              print(f"编译: {cc_file}")
+          def compile_file(src, extra_args=[], is_interface=False):
+              base = os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", "")
+              out = os.path.join(PCM_DIR, base + (".pcm" if is_interface else ".o"))
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", out] + extra_args
+              print(f"编译: {src} -> {out}")
               subprocess.run(cmd, check=True)
-              compiled.add(cc_file)
+              return out
 
-          # 按模块文件优先编译
-          for f in all_cc:
-              if file_info[f][0]:  # 有模块相关
-                  compile_one(f)
+          # Tier 0: 无内部依赖的分区（可并行，但顺序执行）
+          tier0 = [
+              "utility/utility.cc",
+              "memory/memory.cc",
+              "platform/lockable.cc",
+              "functional/functional.cc",
+              "functional/bind.cc",       # 仅依赖 ::utility 和 ::functional.flat_tuple，而 flat_tuple 也在这里
+              "functional/flat_tuple.cc", # 无内部依赖
+              "type_traits/transform.cc",
+              "type_traits/type_of.cc",
+          ]
+          for f in tier0:
+              compile_file(os.path.join(UTIL_DIR, f))
+
+          # Tier 1: 依赖 Tier 0 的分区
+          tier1 = [
+              "type_traits/function_traits.cc",  # 依赖 :type_traits.transform
+              "functional/regular_return.cc",    # 依赖 :utility
+              "functional/bind.cc",              # 已在上面，但为确保依赖，再写一次也没事
+          ]
+          for f in tier1:
+              compile_file(os.path.join(UTIL_DIR, f))
+
+          # 主模块接口 _module.cc 必须最后编译（聚合所有分区）
+          compile_file(os.path.join(UTIL_DIR, "_module.cc"))
+
+          # 编译其它所有未被列出的 .cc 文件（它们通常没有模块依赖）
+          compiled_set = set(tier0 + tier1 + ["_module.cc"])
+          for f in glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True):
+              rel = os.path.relpath(f, UTIL_DIR)
+              if rel not in compiled_set:
+                  compile_file(f)
 
           print("utility 模块预编译完成")
 
