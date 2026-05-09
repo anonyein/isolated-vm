@@ -267,11 +267,11 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 预编译 utility 模块（硬编码顺序）
+      - name: 自动拓扑排序并编译 utility 模块
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
-          import os, subprocess, glob
+          import os, subprocess, re, glob, collections
 
           SRC_ROOT = os.getcwd()
           BUILD_DIR = os.path.join(SRC_ROOT, "build")
@@ -288,77 +288,80 @@ jobs:
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          pcm_map = {}
+          # 收集所有 .cc 文件信息
+          cc_files = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
+          partitions = {}  # 分区名 -> 源文件路径
+          deps = []       # (分区名, [依赖分区名])
+          no_partition = []  # 没有 export module util:xxx 的文件
 
-          def compile_partition(src_rel, partition_name, dependencies=[]):
-              src = os.path.join(UTIL_DIR, src_rel)
-              pcm_path = os.path.join(PCM_DIR, f"util-{partition_name}.pcm")
+          for f in cc_files:
+              with open(f) as fh:
+                  content = fh.read()
+              m = re.search(r'export module util:([\w.]+)', content)
+              if m:
+                  part = m.group(1)
+                  partitions[part] = f
+                  imports = re.findall(r'import :([\w.]+)', content)
+                  deps.append((part, imports))
+              elif 'export module util;' not in content:
+                  no_partition.append(f)
+
+          # 拓扑排序 (Kahn)
+          graph = collections.defaultdict(list)
+          indegree = collections.defaultdict(int)
+          for part, implist in deps:
+              indegree.setdefault(part, 0)
+              for imp in implist:
+                  if imp in partitions:
+                      graph[imp].append(part)
+                      indegree[part] += 1
+
+          queue = [p for p in partitions if indegree[p] == 0]
+          sorted_parts = []
+          while queue:
+              p = queue.pop(0)
+              sorted_parts.append(p)
+              for nxt in graph[p]:
+                  indegree[nxt] -= 1
+                  if indegree[nxt] == 0:
+                      queue.append(nxt)
+
+          # 编译分区（先生成 PCM，再生成目标文件）
+          compiled_pcm = {}
+          for part in sorted_parts:
+              src = partitions[part]
+              pcm_path = os.path.join(PCM_DIR, f"util-{part}.pcm")
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-              # PCM
+
+              # 生成 PCM
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", src, "-o", pcm_path]
-              for dep in dependencies:
-                  if dep in pcm_map:
-                      cmd.append(f"-fmodule-file=util:{dep}={pcm_map[dep]}")
-              print(f"PCM: {partition_name}")
+              for imp in re.findall(r'import :([\w.]+)', open(src).read()):
+                  if imp in compiled_pcm:
+                      cmd.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
               subprocess.run(cmd, check=True)
-              pcm_map[partition_name] = pcm_path
-              # Object
+              compiled_pcm[part] = pcm_path
+
+              # 生成 .o
               cmd2 = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path]
-              for dep in dependencies:
-                  if dep in pcm_map:
-                      cmd2.append(f"-fmodule-file=util:{dep}={pcm_map[dep]}")
+              for imp in re.findall(r'import :([\w.]+)', open(src).read()):
+                  if imp in compiled_pcm:
+                      cmd2.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
               subprocess.run(cmd2, check=True)
 
-          def compile_plain(src_rel):
-              src = os.path.join(UTIL_DIR, src_rel)
-              obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path], check=True)
-
-          # Tier 0
-          compile_partition("utility/utility.cc", "utility")
-          compile_partition("memory/memory.cc", "memory")
-          compile_partition("type_traits/transform.cc", "type_traits.transform")
-          compile_partition("type_traits/type_of.cc", "type_traits.type_of")
-          compile_partition("functional/flat_tuple.cc", "functional.flat_tuple")
-          compile_partition("functional/function_constant.cc", "functional.function_constant")
-          compile_partition("functional/function_ref.cc", "functional.function_ref")
-          compile_partition("functional/elide.cc", "functional.elide")
-          compile_partition("functional/functional.cc", "functional")
-          compile_partition("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
-          compile_partition("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
-          compile_partition("container/tinker_queue.cc", "container.tinker_queue")
-          compile_partition("container/sealed_map.cc", "container.sealed_map")
-
-          # Tier 1
-          compile_partition("platform/lockable.cc", "platform.lockable", ["utility"])
-          compile_partition("functional/regular_return.cc", "functional.regular_return", ["utility"])
-          compile_partition("type_traits/function_traits.cc", "type_traits.function_traits", ["type_traits.transform"])
-          compile_partition("functional/bind.cc", "functional.bind", ["functional.flat_tuple", "utility"])
-
-          # Main module interface
-          src = os.path.join(UTIL_DIR, "_module.cc")
+          # 编译主模块接口 _module.cc
+          primary_src = os.path.join(UTIL_DIR, "_module.cc")
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", src, "-o", main_pcm]
-          for pname, ppath in pcm_map.items():
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", primary_src, "-o", main_pcm]
+          for pname, ppath in compiled_pcm.items():
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           subprocess.run(cmd, check=True)
 
-          # Remaining non-module files
-          known_partitions = {
-              "utility/utility.cc", "memory/memory.cc", "type_traits/transform.cc",
-              "type_traits/type_of.cc", "functional/flat_tuple.cc", "functional/function_constant.cc",
-              "functional/function_ref.cc", "functional/elide.cc", "functional/functional.cc",
-              "container/mutable_priority_queue.cc", "container/segmented_priority_queue.cc",
-              "container/tinker_queue.cc", "container/sealed_map.cc",
-              "platform/lockable.cc", "functional/regular_return.cc",
-              "type_traits/function_traits.cc", "functional/bind.cc", "_module.cc"
-          }
-          for f in glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True):
-              rel = os.path.relpath(f, UTIL_DIR)
-              if rel not in known_partitions:
-                  compile_plain(rel)
+          # 编译剩余的没有模块声明的 .cc 文件（如果有）
+          for src in no_partition:
+              obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path], check=True)
 
-          print("utility 模块编译完成")
+          print("utility 模块编译完成（拓扑排序）")
 
       - name: 构建最终目标
         run: ninja -C build backend_napi_v8
