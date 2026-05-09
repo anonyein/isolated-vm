@@ -161,7 +161,8 @@ jobs:
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
+          # 追加 Boost 路径、隐式模块映射和缓存路径（切勿覆盖 CMAKE_CXX_FLAGS 中原有内容）
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache" CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -190,7 +191,7 @@ jobs:
       - name: 修复源码与编译参数
         shell: bash
         run: |
-          echo "修复源码中的 import std 和模块结构..."
+          echo "修复源码中的 import std、模块结构和兼容性问题..."
 
           # 0. 精准修复 elide.cc 的 GCC 扩展语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
@@ -199,7 +200,7 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h（包含 <condition_variable>）
+          # 2. 创建 bits/stdc++.h（包含所有需要的 C++ 标准头文件）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -275,13 +276,12 @@ jobs:
           # 6. 对于既无 module; 也无 export module 的文件，在开头插入 #include
           find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
 
-          # 7. 严格清理 build.ninja 中不兼容的标志，但保留模块支持标志
+          # 7. 仅删除明确不兼容的标志，保留 -fimplicit-module-maps 等模块支持标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          # 不删除 -fimplicit-module-maps、-fimplicit-modules、-fmodules-cache-path，以支持模块依赖扫描
 
-          # 8. 注入 Boost 头文件路径
+          # 8. 注入 Boost 头文件路径（已通过 CMAKE_CXX_FLAGS 添加，此处双重保险）
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
