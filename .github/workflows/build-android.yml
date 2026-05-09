@@ -191,14 +191,10 @@ jobs:
       - name: 修复源码（import std 替换、elide.cc 修复）
         shell: bash
         run: |
-          # 0. 精准修复 elide.cc 的 GCC 扩展语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-
-          # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -257,126 +253,44 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
-
-          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
           for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
             if ! grep -q '^module;$' "$f"; then
               sed -i '1i\module;' "$f"
               sed -i '2i\#include <bits/stdc++.h>' "$f"
             fi
           done
-
-          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
           find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
-
-          # 6. 对于既无 module; 也无 export module 的文件，在开头插入 #include
           find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
 
-      - name: 手动排序编译所有模块（显式指定依赖）
+      - name: 清理 ninja 中的不兼容标志
+        shell: bash
+        run: |
+          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+
+      - name: 先生成所有模块接口文件（PCM）
         shell: bash
         working-directory: ${{ env.BUILD_DIR }}
         run: |
-          # 获取基础编译命令 (去除 -MD -MF -o 等)
-          base_cmd() {
-            local src="$1"
-            local out="$2"
-            # 从 ninja 命令中提取针对该源文件的完整编译命令，并替换输出
-            cmd=$(ninja -t commands | grep -F "$src" | head -1)
-            # 移除 -o 原有目标，添加新输出
-            cmd=$(echo "$cmd" | sed "s| -o [^ ]*| -o $out|")
-            echo "$cmd"
-          }
-
-          # 编译一个模块接口单元（生成 .pcm）
-          compile_module() {
-            local src="$1"
-            local pcm="$2"
-            echo "Compiling module interface: $src -> $pcm"
-            cmd=$(base_cmd "$src" "$pcm")
-            eval "$cmd" || exit 1
-          }
-
-          # 编译一个模块分区，需要主模块的 PCM
-          compile_partition() {
-            local src="$1"
-            local pcm="$2"
-            local main_pcm="$3"
-            local main_name="$4"
-            echo "Compiling partition $src with main PCM $main_pcm"
-            cmd=$(base_cmd "$src" "$pcm")
-            # 添加 -fmodule-file= 来链接主模块
-            cmd="$cmd -fmodule-file=${main_name}=${main_pcm}"
-            eval "$cmd" || exit 1
-          }
-
-          # 编译使用者，链接所有需要的 PCM
-          compile_user() {
-            local src="$1"
-            local obj="$2"
-            shift 2
-            echo "Compiling user: $src"
-            cmd=$(base_cmd "$src" "$obj")
-            # 添加所有 -fmodule-file 参数
-            for arg in "$@"; do
-              cmd="$cmd -fmodule-file=${arg}"
+          echo "提取所有生成.pcm的命令并顺序执行..."
+          pcm_cmds=$(ninja -t commands | grep -E '\.pcm\b' | grep -v '^-' || true)
+          if [ -z "$pcm_cmds" ]; then
+            # 备选方案：直接搜索 -o *.pcm
+            pcm_cmds=$(ninja -t commands | grep ' -o .*\.pcm ' || true)
+          fi
+          if [ -n "$pcm_cmds" ]; then
+            echo "找到 PCM 生成命令 (显示前5条):"
+            echo "$pcm_cmds" | head -5
+            echo "$pcm_cmds" | while IFS= read -r cmd; do
+              echo "执行: $cmd"
+              bash -c "$cmd" || echo "警告: 命令失败，继续下一个..."
             done
-            eval "$cmd" || exit 1
-          }
-
-          # 清理可能残留的无效 PCM
-          rm -f _npm/@auto_js/utility/CMakeFiles/utility_js.dir/*.pcm
-
-          # 1. 编译主模块 util
-          compile_module \
-            "$SRC_DIR/packages/utility/_module.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" || true
-
-          # 2. 编译分区 util:type_traits.transform (主模块: util)
-          compile_partition \
-            "$SRC_DIR/packages/utility/type_traits/transform.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.transform.pcm" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" \
-            "util" || true
-
-          # 3. 编译分区 util:type_traits.type_of
-          compile_partition \
-            "$SRC_DIR/packages/utility/type_traits/type_of.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.type_of.pcm" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" \
-            "util" || true
-
-          # 4. 编译分区 util:type_traits.function_traits
-          compile_partition \
-            "$SRC_DIR/packages/utility/type_traits/function_traits.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.function_traits.pcm" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" \
-            "util" || true
-
-          # 5. 编译使用者 regular_return.cc，需要链接分区 PCM
-          compile_user \
-            "$SRC_DIR/packages/utility/functional/regular_return.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/functional/regular_return.cc.o" \
-            "util:type_traits.transform=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.transform.pcm" \
-            "util=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" || true
-
-          # 6. 编译 lockable.cc，需要链接 type_traits.type_of 和主模块
-          compile_user \
-            "$SRC_DIR/packages/utility/platform/lockable.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/platform/lockable.cc.o" \
-            "util:type_traits.type_of=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.type_of.pcm" \
-            "util=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" || true
-
-          # 7. 编译 bind.cc，需要链接 function_traits 和 transform 分区
-          compile_user \
-            "$SRC_DIR/packages/utility/functional/bind.cc" \
-            "_npm/@auto_js/utility/CMakeFiles/utility_js.dir/functional/bind.cc.o" \
-            "util:type_traits.function_traits=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.function_traits.pcm" \
-            "util:type_traits.transform=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util-type_traits.transform.pcm" \
-            "util=_npm/@auto_js/utility/CMakeFiles/utility_js.dir/util.pcm" || true
-
-          echo "关键模块编译完成，继续进行 ninja 构建"
+            echo "PCM 预生成完成。"
+          else
+            echo "未找到任何 PCM 生成命令，可能无需预生成 PCM。"
+          fi
 
       - name: 构建最终目标
         run: ninja -C build backend_napi_v8 -k 0 || echo "构建失败，请将日志提交给 isolated-vm 项目。"
