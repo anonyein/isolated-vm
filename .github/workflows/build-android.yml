@@ -199,7 +199,7 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h（包含 stop_token、source_location 兼容代码）
+          # 2. 创建 bits/stdc++.h（无条件提供 stop_token 和 source_location 替代）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -252,9 +252,7 @@ jobs:
           #include <bit>
           #include <version>
 
-          #if __has_include(<stop_token>)
-          #include <stop_token>
-          #else
+          // 替代 stop_token / stop_source
           namespace std {
               class stop_token {};
               class stop_source {
@@ -262,14 +260,8 @@ jobs:
                   stop_token get_token() const { return stop_token(); }
               };
           }
-          #endif
 
-          #if __has_include(<source_location>)
-          #include <source_location>
-          #elif __has_include(<experimental/source_location>)
-          #include <experimental/source_location>
-          namespace std { using std::experimental::source_location; }
-          #else
+          // 替代 source_location
           namespace std {
               class source_location {
               public:
@@ -277,7 +269,6 @@ jobs:
                   const char* function_name() const noexcept { return "unknown"; }
               };
           }
-          #endif
           STD_HEADER
 
           # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
@@ -306,7 +297,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 8. 注入 Boost 头文件路径（移除 -include stub.h）
+          # 8. 注入 Boost 头文件路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
