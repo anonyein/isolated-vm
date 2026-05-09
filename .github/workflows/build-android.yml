@@ -161,7 +161,7 @@ jobs:
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers -fimplicit-module-maps -fmodules-cache-path=${CMAKE_BINARY_DIR}/module_cache" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
           AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
@@ -267,7 +267,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动排序并编译 utility 模块（修复聚合分区依赖）
+      - name: 自动排序并编译 utility 模块（最终修复）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -354,17 +354,16 @@ jobs:
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               imports = imports_map.get(part, [])
 
-              # 收集需要传递的 PCM
+              # 收集需要传递的 PCM，正确添加 -fmodule-file= 前缀
               extra_pcms = []
               for imp in imports:
                   if imp in compiled_pcm:
-                      extra_pcms.append(f"util:{imp}={compiled_pcm[imp]}")
-                  # 若依赖是聚合分区，传递其自身及其所有子分区
+                      extra_pcms.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
                   if is_aggregate.get(imp, False):
                       sub_deps = get_recursive_deps(imp)
                       for sdep in sub_deps:
                           if sdep in compiled_pcm:
-                              extra_pcms.append(f"util:{sdep}={compiled_pcm[sdep]}")
+                              extra_pcms.append(f"-fmodule-file=util:{sdep}={compiled_pcm[sdep]}")
 
               # 生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra_pcms
@@ -380,7 +379,7 @@ jobs:
           for part in sorted_parts:
               compile_partition(part)
 
-          # 补充编译 _module.cc 中引用但尚未编译的分区（例如 container.sealed_map）
+          # 补充编译 _module.cc 中引用但尚未编译的分区
           primary_src = os.path.join(UTIL_DIR, "_module.cc")
           with open(primary_src) as f:
               primary_content = f.read()
@@ -390,7 +389,7 @@ jobs:
               print(f"补充编译缺失分区: {part}")
               compile_partition(part)
 
-          # 最终补齐：确保所有未编译的分区都被编译（包括 functional 等聚合分区本身）
+          # 最终补齐所有未编译分区
           all_remaining = [p for p in partitions if p not in compiled_pcm]
           for part in all_remaining:
               print(f"补齐分区: {part}")
