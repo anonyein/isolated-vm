@@ -97,7 +97,6 @@ jobs:
           curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C /tmp
           mkdir -p "deps/nodejs/${{ env.NODE_HEADERS }}"
           cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "deps/nodejs/${{ env.NODE_HEADERS }}/"
-          # 同时复制到子包需要的路径
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r "deps/nodejs/${{ env.NODE_HEADERS }}"/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
           mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
@@ -200,7 +199,7 @@ jobs:
 
       - name: 配置 xmake
         run: |
-          xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} --ndk_api=${{ matrix.ndk_api }} -m release
+          xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} --ndkapi=${{ matrix.ndk_api }} -m release
 
       - name: 构建
         run: xmake build backend_napi_v8
