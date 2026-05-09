@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 安装系统依赖
-        run: sudo apt-get update && sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev xxd
 
       - name: 准备独立的 Boost 头文件目录
         run: |
@@ -95,12 +95,9 @@ jobs:
         run: |
           mkdir -p deps/nodejs
           curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C /tmp
-          # 复制到 deps/nodejs/24.15.0（保持完整目录结构）
           cp -r "/tmp/node-v${{ env.NODE_HEADERS }}" "deps/nodejs/${{ env.NODE_HEADERS }}"
-          # 复制到 packages/third_party/nodejs/deps/nodejs/24.15.0
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/"
-          # 同样复制到 packages/third_party/v8/deps/nodejs/24.15.0（若需要）
           mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/"
 
@@ -203,6 +200,13 @@ jobs:
           # 修复 elide.cc
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+
+      - name: 生成 runtime_dist_interface_js.h
+        run: |
+          mkdir -p packages/backend_napi_v8/runtime
+          xxd -i runtime/dist/interface.js packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
+          # 统一变量名
+          sed -i 's/runtime_dist_interface_js/runtime_dist_interface_js/g' packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
 
       - name: 配置 xmake
         run: xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} -m release
