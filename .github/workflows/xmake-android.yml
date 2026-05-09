@@ -57,30 +57,40 @@ jobs:
       - name: 安装 npm 依赖并编译 TypeScript
         run: pnpm install --frozen-lockfile && npx tsc -b
 
-      - name: 下载并配置 Android NDK
+      # 修复：用 pnpm 将 playwright 添加为项目依赖，然后再安装浏览器
+      - name: 安装 Playwright 及浏览器
         run: |
-          mkdir -p $ANDROID_NDK_HOME
-          curl -fsSL "https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip" -o ndk.zip
-          unzip -q ndk.zip -d /tmp
-          mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
+          pnpm add -D -w playwright
+          npx playwright install chromium
 
-      - name: 下载 Javet SO（可选）
+      - name: 下载 Javet SO (headless)
         continue-on-error: true
         run: |
-          npm i -g playwright && npx playwright install chromium
-          cat > dl.cjs << 'EOF'
+          cat > download.cjs << 'SCRIPT_END'
           const { chromium } = require('playwright');
           (async () => {
             const browser = await chromium.launch();
             const page = await browser.newPage();
-            await page.goto(process.env.DOWNLOAD_URL, { waitUntil: 'networkidle' });
-            const [download] = await Promise.all([ page.waitForEvent('download'), page.goto(process.env.DOWNLOAD_URL) ]);
-            await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
-            await browser.close();
-          })();
-          EOF
+            const url = process.env.DOWNLOAD_URL;
+            try {
+              const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: 60000 }),
+                page.goto(url, { waitUntil: 'networkidle' })
+              ]);
+              await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
+              console.log('下载成功');
+            } catch (e) {
+              console.error('下载失败，继续构建:', e.message);
+            } finally {
+              await browser.close();
+            }
+          })()
+          SCRIPT_END
           mkdir -p deps/javet
-          DOWNLOAD_URL="${{ matrix.download_url }}" JAVET_SO_NAME="${{ env.JAVET_SO_NAME }}" node dl.cjs
+          node download.cjs
+        env:
+          DOWNLOAD_URL: ${{ matrix.download_url }}
+          JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
 
       - name: 下载 Node.js 头文件
         run: |
@@ -100,11 +110,16 @@ jobs:
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      # 关键：源码修复
+      - name: 下载并配置 Android NDK
+        run: |
+          mkdir -p $ANDROID_NDK_HOME
+          curl -fsSL "https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip" -o ndk.zip
+          unzip -q ndk.zip -d /tmp
+          mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
+
       - name: 修复源码（bits/stdc++.h 及 elide.cc）
         shell: bash
         run: |
-          # 创建 bits/stdc++.h
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -163,20 +178,23 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 修复所有 .cc 文件：删除 import std; 并插入 bits/stdc++.h
+          # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-          find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
-          for f in $(find packages -name '*.cc'); do 
-              if grep -q 'module ' "$f"; then
-                  sed -i '1i\module;' "$f"
-                  sed -i '2i\#include <bits/stdc++.h>' "$f"
-              else
-                  sed -i '1i\#include <bits/stdc++.h>' "$f"
-              fi
+          # 处理包含模块声明的文件：确保前两行为 module; 和 #include
+          for f in $(grep -rl 'module util' packages/); do
+            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
+            sed -i '/^module;$/d' "$f"
+            sed -i '1i\module;' "$f"
+            sed -i '2i\#include <bits/stdc++.h>' "$f"
+          done
+          # 其它源文件直接在第一行插入
+          for f in $(find packages -name '*.cc' -exec grep -L 'module util' {} \;) ; do
+            sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 修复 elide.cc 的 GCC 扩展
+          # 修复 elide.cc
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
       - name: 配置 xmake
         run: |
@@ -188,11 +206,12 @@ jobs:
       - name: 验证产物
         if: success()
         run: |
-          ls -l build/android/${{ matrix.abi }}/release/libbackend_napi_v8.so
-          file build/android/${{ matrix.abi }}/release/libbackend_napi_v8.so
+          echo "查找生成的 .node 文件..."
+          find build -name "backend_napi_v8.node" -o -name "libbackend_napi_v8.so" | xargs ls -lh
 
       - uses: actions/upload-artifact@v6
         if: success()
         with:
           name: isolated-vm-android-${{ matrix.abi }}
-          path: build/android/${{ matrix.abi }}/release/libbackend_napi_v8.so
+          path: build/**/libbackend_napi_v8.so
+          if-no-files-found: error
