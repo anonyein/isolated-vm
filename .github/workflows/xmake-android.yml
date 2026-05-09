@@ -57,7 +57,6 @@ jobs:
       - name: 安装 npm 依赖并编译 TypeScript
         run: pnpm install --frozen-lockfile && npx tsc -b
 
-      # 修复：用 pnpm 将 playwright 添加为项目依赖，然后再安装浏览器
       - name: 安装 Playwright 及浏览器
         run: |
           pnpm add -D -w playwright
@@ -92,17 +91,19 @@ jobs:
           DOWNLOAD_URL: ${{ matrix.download_url }}
           JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
 
-      - name: 下载 Node.js 头文件
+      - name: 下载 Node.js 头文件并调整路径
         run: |
           mkdir -p deps/nodejs
-          curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C deps/nodejs --strip-components=1
-
-      - name: 复制 Node 头文件到子包预期位置
-        run: |
+          # 下载并解压到临时目录
+          curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C /tmp
+          # 目标路径 deps/nodejs/${{ env.NODE_HEADERS }}（必须存在，否则复制会失败）
+          mkdir -p "deps/nodejs/${{ env.NODE_HEADERS }}"
+          cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "deps/nodejs/${{ env.NODE_HEADERS }}/"
+          # 子包需要的复制
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
+          cp -r "deps/nodejs/${{ env.NODE_HEADERS }}"/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
           mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
+          cp -r "deps/nodejs/${{ env.NODE_HEADERS }}"/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
 
       - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
         run: |
@@ -180,15 +181,15 @@ jobs:
 
           # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-          # 处理包含模块声明的文件：确保前两行为 module; 和 #include
+          # 模块文件处理
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
             sed -i '1i\module;' "$f"
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
-          # 其它源文件直接在第一行插入
-          for f in $(find packages -name '*.cc' -exec grep -L 'module util' {} \;) ; do
+          # 非模块文件处理
+          for f in $(find packages -name '*.cc' -exec grep -L 'module util' {} \;); do
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
@@ -206,7 +207,6 @@ jobs:
       - name: 验证产物
         if: success()
         run: |
-          echo "查找生成的 .node 文件..."
           find build -name "backend_napi_v8.node" -o -name "libbackend_napi_v8.so" | xargs ls -lh
 
       - uses: actions/upload-artifact@v6
