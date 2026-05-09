@@ -192,10 +192,13 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码与编译参数（正确处理模块结构）
+      - name: 修复源码与编译参数（处理 import std、模块结构、语法修复）
         shell: bash
         run: |
-          echo "修复源码中的 import std 和模块结构..."
+          echo "修复源码中的 import std、模块结构和语法问题..."
+
+          # 0. 修复结构化绑定包展开的语法错误：[... args ] -> [...args]
+          find packages -name '*.cc' -exec sed -i 's/\[\.\.\. \([a-zA-Z_][a-zA-Z0-9_]*\) \]/[...\1]/g' {} \;
 
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
