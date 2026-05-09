@@ -287,30 +287,25 @@ jobs:
 
           echo "修复完成"
 
-      - name: 手动预编译缺失的模块分区文件
+      - name: 先生成所有模块接口（PCM）
         shell: bash
         working-directory: ${{ github.workspace }}/build
         run: |
-          echo "尝试手动预编译模块分区文件..."
-          CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
-          # 从 ninja 中提取完整编译命令并执行
-          for src in \
-            packages/utility/type_traits/transform.cc \
-            packages/utility/type_traits/type_of.cc \
-            packages/utility/type_traits/function_traits.cc
-          do
-            cmd=$(ninja -t commands | grep -F "$src" | head -1)
-            if [ -n "$cmd" ]; then
-              echo "执行: $cmd"
-              bash -c "$cmd" 2>&1 | tail -5
-            else
-              echo "警告: 未找到 $src 的构建命令"
-            fi
-          done
-          echo "手动编译完成，继续 ninja 构建"
+          echo "获取所有 PCM 目标并优先构建..."
+          pcm_targets=$(ninja -t targets all 2>/dev/null | grep '\.pcm$' | awk -F: '{print $1}' || true)
+          if [ -n "$pcm_targets" ]; then
+            echo "找到 PCM 目标:"
+            echo "$pcm_targets"
+            # 构建所有 PCM 文件
+            echo "$pcm_targets" | xargs ninja || echo "部分 PCM 构建失败，尝试继续..."
+          else
+            echo "未找到 PCM 目标，直接继续"
+          fi
 
-      - name: 构建
-        run: ninja -C build backend_napi_v8 || echo "构建失败，请将日志提交给 isolated-vm 项目。"
+      - name: 构建最终目标
+        run: |
+          cd build
+          ninja backend_napi_v8 -k 0 || echo "构建失败，请将日志提交给 isolated-vm 项目。"
 
       - name: 验证产物
         if: success()
