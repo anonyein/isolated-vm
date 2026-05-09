@@ -118,7 +118,7 @@ jobs:
           unzip -q ndk.zip -d /tmp
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
 
-      - name: 修复源码（精准处理：仅删除 import std;，为模块文件添加 module; 和 bits/stdc++.h，为普通文件只添加 bits/stdc++.h）
+      - name: 修复源码（修正模块结构，仅排除 test 文件，保留 node_modules）
         shell: bash
         run: |
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
@@ -179,29 +179,27 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 1. 删除所有 import std;
+          # 删除所有 import std;
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 处理所有包含 'module '（含 export module）的文件：
-          #    如果第一行不是 'module;'，则在开头添加 'module;' 和 '#include <bits/stdc++.h>'
+          # 处理所有包含 'module ' 的文件（包括 export module）
           for f in $(grep -rlP '(?:export\s+)?module\s' packages/); do
-            # 移除之前可能插入的重复行
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
-            # 检查第一行是否为 'module;'，如果不是，则插入两行
+            # 如果文件不以 module; 开头，插入 module; 和 #include
             if ! grep -q '^module;$' "$f"; then
               sed -i '1i\module;' "$f"
               sed -i '2i\#include <bits/stdc++.h>' "$f"
             fi
           done
 
-          # 3. 对于没有模块声明的文件，直接在第一行插入 '#include <bits/stdc++.h>'
+          # 非模块文件直接在开头插入 #include
           for f in $(find packages -name '*.cc' -exec grep -LP '(?:export\s+)?module\s' {} \;); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 4. 修复 elide.cc
+          # 修复 elide.cc
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
