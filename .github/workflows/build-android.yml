@@ -258,10 +258,10 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 修正 regular_return.cc 和 bind.cc：先移除之前错误插入的 import，然后在 export module 之前插入正确的导入
+          # 为 regular_return.cc 和 bind.cc 添加缺失的分区导入（放在 export module 之后）
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             sed -i '/^import :type_traits\.transform;$/d' "$file"
-            sed -i '/^export module util:functional\.\(regular_return\|bind\);/i\import :type_traits.transform;' "$file"
+            sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
           done
 
       - name: 清理 ninja 中的不兼容标志
