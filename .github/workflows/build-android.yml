@@ -267,7 +267,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 自动拓扑排序并编译 utility 模块
+      - name: 自动拓扑排序并编译 utility 模块（使用 -fmodule-output）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -282,17 +282,18 @@ jobs:
 
           BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
                        f"-isystem /tmp/host-boost-headers -isystem {SRC_ROOT}/packages/utility/include " \
-                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG"
+                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG " \
+                       f"-fimplicit-module-maps -fmodules-cache-path={BUILD_DIR}/module_cache"
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
           PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
           os.makedirs(PCM_DIR, exist_ok=True)
 
-          # 收集所有 .cc 文件信息
           cc_files = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
-          partitions = {}  # 分区名 -> 源文件路径
-          deps = []       # (分区名, [依赖分区名])
-          no_partition = []  # 没有 export module util:xxx 的文件
+
+          partitions = {}
+          deps = []
+          no_partition = []
 
           for f in cc_files:
               with open(f) as fh:
@@ -306,7 +307,6 @@ jobs:
               elif 'export module util;' not in content:
                   no_partition.append(f)
 
-          # 拓扑排序 (Kahn)
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
           for part, implist in deps:
@@ -326,42 +326,40 @@ jobs:
                   if indegree[nxt] == 0:
                       queue.append(nxt)
 
-          # 编译分区（先生成 PCM，再生成目标文件）
           compiled_pcm = {}
-          for part in sorted_parts:
+
+          def compile_partition(part):
               src = partitions[part]
               pcm_path = os.path.join(PCM_DIR, f"util-{part}.pcm")
               obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-
-              # 生成 PCM
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", src, "-o", pcm_path]
-              for imp in re.findall(r'import :([\w.]+)', open(src).read()):
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path, f"-fmodule-output={pcm_path}"]
+              with open(src) as f:
+                  imports = re.findall(r'import :([\w.]+)', f.read())
+              for imp in imports:
                   if imp in compiled_pcm:
                       cmd.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
+              print(f"编译分区 {part}")
               subprocess.run(cmd, check=True)
               compiled_pcm[part] = pcm_path
 
-              # 生成 .o
-              cmd2 = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path]
-              for imp in re.findall(r'import :([\w.]+)', open(src).read()):
-                  if imp in compiled_pcm:
-                      cmd2.append(f"-fmodule-file=util:{imp}={compiled_pcm[imp]}")
-              subprocess.run(cmd2, check=True)
+          for part in sorted_parts:
+              compile_partition(part)
 
-          # 编译主模块接口 _module.cc
+          # 主模块接口 _module.cc
           primary_src = os.path.join(UTIL_DIR, "_module.cc")
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", primary_src, "-o", main_pcm]
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", primary_src, "-o", os.path.join(PCM_DIR, "util._module.o"), f"-fmodule-output={main_pcm}"]
           for pname, ppath in compiled_pcm.items():
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+          print("编译主模块接口 util")
           subprocess.run(cmd, check=True)
 
-          # 编译剩余的没有模块声明的 .cc 文件（如果有）
+          # 编译剩余的无模块文件
           for src in no_partition:
-              obj_path = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path], check=True)
+              obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj], check=True)
 
-          print("utility 模块编译完成（拓扑排序）")
+          print("utility 模块编译完成")
 
       - name: 构建最终目标
         run: ninja -C build backend_napi_v8
