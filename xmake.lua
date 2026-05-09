@@ -1,11 +1,15 @@
+-- xmake.lua
 set_project("isolated-vm")
 set_version("0.0.1")
 add_rules("mode.release")
 
+-- C++20 模块扫描
 set_languages("gnu++26")
+
+-- 全局定义
 add_defines("EXPORT_IS_EXPORT")
 
--- 全局头文件路径
+-- 包含路径
 add_includedirs("packages/utility/include")
 add_includedirs("/tmp/host-boost-headers")
 add_includedirs("packages/third_party/nodejs/deps/nodejs/24.15.0/include/node")
@@ -17,7 +21,7 @@ add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linu
 -- 链接目录
 add_linkdirs("deps/javet")
 
--- 根据架构设置目标三元组（API 级别 24）
+-- 目标三元组
 if is_arch("arm64-v8a") then
     add_cxflags("--target=aarch64-none-linux-android24")
     add_ldflags("--target=aarch64-none-linux-android24")
@@ -28,47 +32,57 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 目标定义
+-- 工具函数：排除测试和 node_modules 目录的文件
+function exclude_dirs(pattern)
+    return function (file)
+        if file:find("test/") or file:find("node_modules/") then
+            return false
+        end
+        return true
+    end
+end
+
+-- ============= 库定义 =============
 target("utility")
     set_kind("static")
-    add_files("packages/utility/**.cc")
+    add_files("packages/utility/**.cc", { filter = exclude_dirs })
 
 target("auto_js")
     set_kind("static")
     add_deps("utility")
-    add_files("packages/auto_js/js/**.cc")
+    add_files("packages/auto_js/js/**.cc", { filter = exclude_dirs })
 
 target("nodejs")
     set_kind("static")
     add_deps("auto_js")
     add_defines("NAPI_VERSION=10")
-    add_files("packages/third_party/nodejs/**.cc")
+    add_files("packages/third_party/nodejs/**.cc", { filter = exclude_dirs })
 
 target("nodejs_v8")
     set_kind("static")
     add_deps("auto_js")
-    add_files("packages/third_party/v8/**.cc")
+    add_files("packages/third_party/v8/**.cc", { filter = exclude_dirs })
 
 target("napi_js")
     set_kind("static")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8")
-    add_files("packages/auto_js/napi/**.cc")
+    add_files("packages/auto_js/napi/**.cc", { filter = exclude_dirs })
 
 target("v8_js")
     set_kind("static")
     add_deps("utility", "auto_js", "nodejs_v8")
-    add_files("packages/auto_js/v8/**.cc")
+    add_files("packages/auto_js/v8/**.cc", { filter = exclude_dirs })
 
 target("isolated_vm")
     set_kind("static")
     add_deps("utility", "v8_js", "napi_js")
-    add_files("packages/isolated-vm/addon/**.cc")
-    add_files("packages/backend_napi_v8/api/**.cc")
+    add_files("packages/isolated-vm/addon/**.cc", { filter = exclude_dirs })
+    add_files("packages/backend_napi_v8/api/**.cc", { filter = exclude_dirs })
 
 target("backend_napi_v8")
     set_kind("shared")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8", "napi_js", "v8_js", "isolated_vm")
-    add_files("packages/backend_napi_v8/**.cc")
+    add_files("packages/backend_napi_v8/**.cc", { filter = exclude_dirs })
     add_links("javet-node-android-i18n")
     if is_plat("android") then
         add_links("uv", "android", "log", "EGL", "GLESv2", "OpenSLES")
