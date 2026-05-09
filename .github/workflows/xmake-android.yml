@@ -118,7 +118,7 @@ jobs:
           unzip -q ndk.zip -d /tmp
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
 
-      - name: 修复源码（修正模块结构，仅排除 test 文件，保留 node_modules）
+      - name: 修复源码（bits/stdc++.h 及 elide.cc，以及所有模块文件）
         shell: bash
         run: |
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
@@ -179,21 +179,20 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 删除所有 import std;
+          # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 处理所有包含 'module ' 的文件（包括 export module）
+          # 处理所有包含 'module ' 的文件（不限于 util）
           for f in $(grep -rlP '(?:export\s+)?module\s' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
-            # 如果文件不以 module; 开头，插入 module; 和 #include
             if ! grep -q '^module;$' "$f"; then
               sed -i '1i\module;' "$f"
               sed -i '2i\#include <bits/stdc++.h>' "$f"
             fi
           done
 
-          # 非模块文件直接在开头插入 #include
+          # 非模块文件
           for f in $(find packages -name '*.cc' -exec grep -LP '(?:export\s+)?module\s' {} \;); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '1i\#include <bits/stdc++.h>' "$f"
@@ -206,6 +205,20 @@ jobs:
       - name: 配置 xmake
         run: |
           xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} -m release
+
+      - name: 修复 build.ninja 中的扫描命令（注入缺失的包含路径）
+        shell: bash
+        run: |
+          NODE_INCLUDE="$(pwd)/packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node"
+          V8_INCLUDE="$(pwd)/packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node"
+          V8_DIR="$(pwd)/packages/third_party/v8"
+          NAPI_INCLUDE="$(pwd)/packages/auto_js/napi/include"
+          UTIL_INCLUDE="$(pwd)/packages/utility/include"
+          BOOST_HEADERS="/tmp/host-boost-headers"
+          
+          # 为所有 clang-scan-deps 命令添加 -I 路径
+          find build -name '*.ninja' -exec sed -i "s|-format=p1689 -- |-format=p1689 -I ${NODE_INCLUDE} -I ${V8_INCLUDE} -I ${V8_DIR} -I ${NAPI_INCLUDE} -I ${UTIL_INCLUDE} -I ${BOOST_HEADERS} -- |g" {} \;
+          echo "已修复 scan-deps 命令"
 
       - name: 构建
         run: xmake build backend_napi_v8
