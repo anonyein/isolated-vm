@@ -10,7 +10,6 @@ env:
   NODE_HEADERS: 24.15.0
   ANDROID_NDK_VERSION: r29
   ANDROID_NDK_HOME: /tmp/android-ndk
-  BUILD_DIR: ${{ github.workspace }}/build
 
 jobs:
   build-android:
@@ -191,10 +190,15 @@ jobs:
       - name: 修复源码（import std 替换、elide.cc 修复）
         shell: bash
         run: |
+          echo "修复源码中的 import std 和模块结构..."
+          # 0. 精准修复 elide.cc 的 GCC 扩展语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+
+          # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
+          # 2. 创建 bits/stdc++.h（包含所有需要的标准头文件）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -253,15 +257,24 @@ jobs:
           #include <version>
           STD_HEADER
 
+          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
+
+          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
           for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
             if ! grep -q '^module;$' "$f"; then
               sed -i '1i\module;' "$f"
               sed -i '2i\#include <bits/stdc++.h>' "$f"
             fi
           done
+
+          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
           find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
+
+          # 6. 对于既无 module; 也无 export module 的文件，在开头插入 #include
           find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
+
+          echo "修复完成"
 
       - name: 清理 ninja 中的不兼容标志
         shell: bash
@@ -270,30 +283,97 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 先生成所有模块接口文件（PCM）
-        shell: bash
-        working-directory: ${{ env.BUILD_DIR }}
+      - name: 自动排序并预编译 utility 模块
+        working-directory: ${{ github.workspace }}
+        shell: python3 {0}
         run: |
-          echo "提取所有生成.pcm的命令并顺序执行..."
-          pcm_cmds=$(ninja -t commands | grep -E '\.pcm\b' | grep -v '^-' || true)
-          if [ -z "$pcm_cmds" ]; then
-            # 备选方案：直接搜索 -o *.pcm
-            pcm_cmds=$(ninja -t commands | grep ' -o .*\.pcm ' || true)
-          fi
-          if [ -n "$pcm_cmds" ]; then
-            echo "找到 PCM 生成命令 (显示前5条):"
-            echo "$pcm_cmds" | head -5
-            echo "$pcm_cmds" | while IFS= read -r cmd; do
-              echo "执行: $cmd"
-              bash -c "$cmd" || echo "警告: 命令失败，继续下一个..."
-            done
-            echo "PCM 预生成完成。"
-          else
-            echo "未找到任何 PCM 生成命令，可能无需预生成 PCM。"
-          fi
+          import os, subprocess, re, glob
+          SRC_ROOT = os.getcwd()
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
+                       f"-isystem /tmp/host-boost-headers -isystem {SRC_ROOT}/packages/utility/include " \
+                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG"
+
+          UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
+          PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
+          os.makedirs(PCM_DIR, exist_ok=True)
+
+          all_cc = glob.glob(os.path.join(UTIL_DIR, "**", "*.cc"), recursive=True)
+
+          def get_module_info(cc_file):
+              with open(cc_file) as f:
+                  content = f.read()
+              has_module = 'export module util' in content or 'module util' in content
+              partition = None
+              m = re.search(r'export module util:([\w.]+)', content)
+              if m:
+                  partition = m.group(1)
+              is_primary = bool(re.search(r'export module util;', content))
+              imports = re.findall(r'import :([\w.]+)', content)
+              return has_module, partition, is_primary, imports
+
+          file_info = {}
+          for f in all_cc:
+              has_mod, part, prim, imp = get_module_info(f)
+              file_info[f] = (has_mod, part, prim, imp)
+
+          compiled = set()
+
+          def compile_one(cc_file):
+              if cc_file in compiled:
+                  return
+              has_mod, part, prim, imports = file_info[cc_file]
+              # 编译依赖的分区或主模块
+              for imp in imports:
+                  for other_file, (om, op, opri, oimp) in file_info.items():
+                      if op == imp:
+                          compile_one(other_file)
+                          break
+              if part:
+                  for other_file, (om, op, opri, oimp) in file_info.items():
+                      if opri:
+                          compile_one(other_file)
+                          break
+
+              basename = os.path.relpath(cc_file, UTIL_DIR).replace("/", ".").replace(".cc", "")
+              obj_path = os.path.join(PCM_DIR, basename + ".o")
+              pcm_path = os.path.join(PCM_DIR, "util" + (f"-{part}" if part else "") + ".pcm")
+
+              # 使用原始 ninja 命令作为基础，但由我们控制顺序
+              # 生成编译命令
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", cc_file, "-o", obj_path]
+              if prim:
+                  # 主模块输出 PCM
+                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["--precompile", cc_file, "-o", pcm_path]
+              elif part:
+                  # 分区文件需要主模块 PCM
+                  main_pcm = os.path.join(PCM_DIR, "util.pcm")
+                  if os.path.exists(main_pcm):
+                      cmd.append(f"-fmodule-file=util={main_pcm}")
+              # 对于导入其他分区的文件，添加相应 -fmodule-file
+              for imp in imports:
+                  pp = os.path.join(PCM_DIR, f"util-{imp}.pcm")
+                  if os.path.exists(pp):
+                      cmd.append(f"-fmodule-file=util:{imp}={pp}")
+
+              print(f"编译: {cc_file}")
+              subprocess.run(cmd, check=True)
+              compiled.add(cc_file)
+
+          # 按模块文件优先编译
+          for f in all_cc:
+              if file_info[f][0]:  # 有模块相关
+                  compile_one(f)
+
+          print("utility 模块预编译完成")
 
       - name: 构建最终目标
-        run: ninja -C build backend_napi_v8 -k 0 || echo "构建失败，请将日志提交给 isolated-vm 项目。"
+        run: ninja -C build backend_napi_v8
 
       - name: 验证产物
         if: success()
