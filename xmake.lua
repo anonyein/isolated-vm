@@ -9,13 +9,16 @@ set_policy("build.c++.modules", true)
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
--- 头文件路径
+-- 头文件路径（新增 auto_js/napi 相关路径）
 add_includedirs("packages/utility/include")
 add_includedirs("/tmp/host-boost-headers")
 add_includedirs("packages/third_party/nodejs/deps/nodejs/24.15.0/include/node")
 add_includedirs("packages/third_party/v8/deps/nodejs/24.15.0/include/node")
 add_includedirs("packages/third_party/v8")
 add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
+-- 添加 auto_js/napi 相关目录，用于找到 napi_js_initialize.h 等文件
+add_includedirs("packages/auto_js/napi")
+add_includedirs("packages/auto_js/napi/support")
 
 add_linkdirs("deps/javet")
 
