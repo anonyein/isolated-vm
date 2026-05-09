@@ -134,7 +134,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      - name: 配置 CMake
+      - name: 配置 CMake（关闭模块编译）
         shell: bash
         run: |
           mkdir -p fake-boost/lib/cmake/Boost
@@ -153,14 +153,14 @@ jobs:
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
           BOOST_VER_EOF
 
-          mkdir -p "${PWD}/build/module_cache"
-
           cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
           include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
+          # 强制关闭所有模块扫描
+          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable module scanning" FORCE)
+          set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "Disable std modules" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -187,19 +187,16 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码与编译参数
+      - name: 彻底禁用模块并替换为头文件编译
         shell: bash
         run: |
-          echo "修复源码中的 import std、模块结构和兼容性问题..."
+          echo "转换 C++20 模块为传统头文件..."
 
           # 0. 修复 elide.cc 的 GCC 扩展语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
-          # 1. 删除所有 import std; 行
-          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-
-          # 2. 创建 bits/stdc++.h（包含所有需要的标准库头文件）
+          # 1. 创建 bits/stdc++.h
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -257,24 +254,18 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
-          find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
+          # 2. 替换所有 import std; 为 #include <bits/stdc++.h>
+          find packages -name '*.cc' -exec sed -i '/^import std;$/c\#include <bits/stdc++.h>' {} \;
 
-          # 4. 为直接以 export module 开头但缺少 module; 的文件，在开头添加 module; 和 #include
-          for f in $(find packages -name '*.cc' -exec grep -l '^export module ' {} \;); do
-            if ! grep -q '^module;$' "$f"; then
-              sed -i '1i\module;' "$f"
-              sed -i '2i\#include <bits/stdc++.h>' "$f"
-            fi
-          done
+          # 3. 注释掉所有模块声明
+          find packages -name '*.cc' -exec sed -i 's/^module;$/\/\/ module;/g' {} \;
+          find packages -name '*.cc' -exec sed -i 's/^export module \(.*\);/\/\/ export module \1;/g' {} \;
 
-          # 5. 为原本就包含 module; 的文件，在 module; 之后插入 #include
-          find packages -name '*.cc' -exec grep -l '^module;$' {} \; | xargs sed -i '/^module;$/a\#include <bits/stdc++.h>'
+          # 4. 注释掉所有 import 语句（模块分区的导入）
+          find packages -name '*.cc' -exec sed -i 's/^import :\(.*\);/\/\/ import :\1;/g' {} \;
+          find packages -name '*.cc' -exec sed -i 's/^import \([^:]*\);$/\/\/ import \1;/g' {} \;
 
-          # 6. 对于既无 module; 也无 export module 的文件（普通源文件），在开头插入 #include
-          find packages -name '*.cc' -exec grep -L -e '^module;$' -e '^export module ' {} \; | xargs -r sed -i '1i\#include <bits/stdc++.h>'
-
-          # 7. 清理 build.ninja 中的不兼容标志
+          # 5. 清理 build.ninja 中的不兼容标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
@@ -283,12 +274,12 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-fimplicit-modules//g' {} \;
           find build -name '*.ninja' -exec sed -i 's|-fmodules-cache-path=[^ ]*||g' {} \;
 
-          # 8. 注入 Boost 头文件路径
+          # 6. 注入 Boost 头文件路径
           CLANGXX='/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++'
           EXTRA_FLAGS="-isystem /tmp/host-boost-headers"
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
 
-          echo "修复完成"
+          echo "转换完成"
 
       - name: 构建
         run: ninja -C build backend_napi_v8
