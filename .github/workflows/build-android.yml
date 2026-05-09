@@ -199,7 +199,7 @@ jobs:
           # 1. 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
 
-          # 2. 创建 bits/stdc++.h（包含所有需要的标准头文件）
+          # 2. 创建 bits/stdc++.h（包含标准库以及项目 utility 下的所有头文件）
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -258,6 +258,10 @@ jobs:
           #include <version>
           STD_HEADER
 
+          # 追加项目 utility 头文件（提供 apply_cvref_t、type_t 等模块导出的类型）
+          echo "// Project utility headers" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
+          find packages/utility/include -name "*.h" -printf "#include <%f>\n" >> "${NDK_CXX_HEADERS}/bits/stdc++.h"
+
           # 3. 清除之前可能插入的所有 #include <bits/stdc++.h> 行
           find packages -name '*.cc' -exec sed -i '/^#include <bits\/stdc++.h>$/d' {} \;
 
@@ -286,14 +290,6 @@ jobs:
           find build -name '*.ninja' -exec sed -i "s|${CLANGXX} |${CLANGXX} ${EXTRA_FLAGS} |g" {} \;
 
           echo "修复完成"
-
-      # 诊断步骤：显示一个模块映射文件，便于排查模块依赖
-      - name: 检查模块映射文件
-        run: |
-          echo "=== 查看 regular_return.cc.o.modmap ==="
-          cat _npm/@auto_js/utility/CMakeFiles/utility_js.dir/functional/regular_return.cc.o.modmap || true
-          echo "=== 查看 transform.cc.o.modmap ==="
-          cat _npm/@auto_js/utility/CMakeFiles/utility_js.dir/type_traits/transform.cc.o.modmap || true
 
       - name: 构建
         run: ninja -C build backend_napi_v8
