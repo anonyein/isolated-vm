@@ -111,7 +111,7 @@ jobs:
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      - name: 下载并配置 Android NDK
+      - name: 下载并配置 Android NDK (r29)
         run: |
           mkdir -p $ANDROID_NDK_HOME
           curl -fsSL "https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip" -o ndk.zip
