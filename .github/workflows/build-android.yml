@@ -310,6 +310,7 @@ jobs:
 
           def cc(rel, part=None):
               src = os.path.join(UTIL_DIR, rel)
+              # 如果没有 part，说明是普通文件，不生成 PCM
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
 
@@ -317,17 +318,19 @@ jobs:
               for name, path in compiled.items():
                   extra.append(f"-fmodule-file=util:{name}={path}")
 
+              # 模块接口才生成 PCM
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: {part}")
                   subprocess.run(cmd, check=True)
                   compiled[part] = pcm
 
+              # 普通编译
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 精确编译顺序
+          # 精确编译顺序（除 timer.cc 外）
           cc("type_traits/transform.cc", "type_traits.transform")
           cc("type_traits/type_of.cc", "type_traits.type_of")
           cc("functional/elide.cc", "functional.elide")
@@ -359,6 +362,9 @@ jobs:
           cc("platform/timer.cc", "platform.timer")
           cc("platform/stop_token.cc", "platform.stop_token")
           cc("container/sealed_map.cc", "container.sealed_map")
+
+          # 普通文件：timer.cc（不生成 PCM）
+          cc("platform/timer.cc")
 
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
