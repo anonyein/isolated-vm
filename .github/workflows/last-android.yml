@@ -282,7 +282,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（先主模块，后实现单元）
+      - name: 完整编译 utility 模块（补全 meta.algorithm 等遗漏分区）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -350,8 +350,11 @@ jobs:
           cc("platform/lockable.cc", "platform.lockable", True)
           cc("platform/stop_token.cc", "platform.stop_token", True)
           cc("container/sealed_map.cc", "container.sealed_map", True)
+          # 补全遗漏的分区
+          cc("meta/algorithm.cc", "meta.algorithm", True)
+          cc("utility/variant.cc", "utility.variant", True)
 
-          # *** 先生成主模块 PCM ***
+          # 先生成主模块 PCM
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
                  os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
@@ -359,9 +362,9 @@ jobs:
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("主模块 PCM: util")
           subprocess.run(cmd, check=True)
-          compiled["util"] = main_pcm   # 让后续编译能找到 util
+          compiled["util"] = main_pcm
 
-          # *** 编译模块实现单元 timer.cc ***
+          # 编译模块实现单元 timer.cc
           cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
