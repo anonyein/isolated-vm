@@ -3,43 +3,38 @@ set_project("isolated-vm")
 set_version("0.0.1")
 add_rules("mode.release")
 
--- 启用 C++20 模块支持
 set_policy("build.c++.modules", true)
 
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
--- 获取工作区根目录
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
--- ========== Node.js 头文件 ==========
-local nodejs_base = path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0")
-add_includedirs(path.join(nodejs_base, "src"), {public = true})
-add_includedirs(path.join(nodejs_base, "deps/v8/include"), {public = true})
-add_includedirs(path.join(nodejs_base, "deps/uv/include"), {public = true})
-add_includedirs(path.join(nodejs_base, "include/node"), {public = true})
+-- Node.js 头文件直接使用 /tmp 解压目录
+local node_ver = os.getenv("NODE_HEADERS") or "24.15.0"
+local node_dir = path.join("/tmp", "node-v" .. node_ver)
 
--- ========== 自定义 V8 相关路径 ==========
-local v8_base = path.join(workspace, "packages/third_party/v8")
-add_includedirs(v8_base)
-add_includedirs(path.join(v8_base, "deps/nodejs/24.15.0/include/node"))
+add_includedirs(path.join(node_dir, "src"), {public = true})
+add_includedirs(path.join(node_dir, "deps/v8/include"), {public = true})
+add_includedirs(path.join(node_dir, "deps/uv/include"), {public = true})
+add_includedirs(path.join(node_dir, "include/node"), {public = true})
 
--- ========== Boost ==========
-add_includedirs("/tmp/host-boost-headers")
-
--- ========== NDK C++ 标准库 ==========
-add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
-
--- ========== 项目内部 include ==========
+-- 项目内部路径
 add_includedirs(path.join(workspace, "packages/utility/include"))
 add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
 add_includedirs(path.join(workspace, "packages/backend_napi_v8/runtime"))
 
--- 强制通过编译标志传递
-add_cxxflags("-I" .. path.join(nodejs_base, "src"))
-add_cxxflags("-I" .. path.join(nodejs_base, "deps/v8/include"))
-add_cxxflags("-I" .. path.join(nodejs_base, "deps/uv/include"))
-add_cxxflags("-I" .. path.join(nodejs_base, "include/node"))
+-- Boost
+add_includedirs("/tmp/host-boost-headers")
+
+-- NDK C++ 标准库
+add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
+
+-- 编译器标志
+add_cxxflags("-I" .. path.join(node_dir, "src"))
+add_cxxflags("-I" .. path.join(node_dir, "deps/v8/include"))
+add_cxxflags("-I" .. path.join(node_dir, "deps/uv/include"))
+add_cxxflags("-I" .. path.join(node_dir, "include/node"))
 add_cxxflags("-I" .. path.join(workspace, "packages/backend_napi_v8/runtime"))
 
 add_linkdirs("deps/javet")
@@ -54,13 +49,12 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 自定义过滤器：排除无关目录
+-- 过滤器：排除 node_modules、deps、test、benchmark
 local function filter_files(file)
-    return not (
-        file:find("node_modules")
-        or file:find("/test/") or file:find("/tests/")
-        or file:find("/deps/") or file:find("/benchmark/")
-    )
+    if file:find("node_modules") or file:find("/deps/") or file:find("/test/") or file:find("/tests/") or file:find("/benchmark/") then
+        return false
+    end
+    return true
 end
 
 target("utility")
