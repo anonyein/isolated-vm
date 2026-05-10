@@ -67,14 +67,11 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      # 处理本地分卷压缩包，解压出 SO
+      # 解压 Javet SO 分卷
       - name: 解压 Javet SO 分卷
         run: |
-          # 合并分卷
           cat libs.7z.001 libs.7z.002 libs.7z.003 > libs.7z
-          # 解压到 libs 文件夹
           7z x libs.7z -olibs
-          # 列出解压结果
           find libs -type f
 
       - name: 复制对应架构的 SO 到 deps/javet
@@ -144,7 +141,8 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
+          # 关闭模块扫描，避免 CMake 生成 dyndep 报错
+          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 module scanning" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
