@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全缺失分区导入、修复 GCC 扩展、替换 timer.cc 为占位实现）
+      - name: 修复源码（补全分区导入、修正 GCC 语法，并彻底重写 timer.cc）
         shell: bash
         run: |
           echo "修复源码..."
@@ -251,7 +251,7 @@ jobs:
           STD_HEADER
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-          # 修复 meta/algorithm.cc 的 GCC 扩展并添加缺失的导入
+          # 修复 meta/algorithm.cc 的 GCC 扩展并添加缺失的分区导入
           sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:meta\.algorithm;$/a\import :type_traits.type_pack;' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:meta\.algorithm;$/a\import :utility;' packages/utility/meta/algorithm.cc
@@ -279,18 +279,16 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 彻底替换 timer.cc 为占位实现，避免 std::thread/std::stop_token 问题
+          # 核心修复：彻底重写 timer.cc，移除错误的 import :platform.timer，仅保留空的模块实现
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
           export module util:platform.timer;
           import :functional;
           import :platform.lockable;
-          import :platform.timer;
 
           namespace util {
               struct timer_thread {
-                  // 空实现，不包含任何线程功能
                   timer_thread() {}
                   void request_stop() {}
                   void join() {}
@@ -304,7 +302,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块
+      - name: 完整编译 utility 模块（正确传递主模块 PCM）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -391,7 +389,7 @@ jobs:
           subprocess.run(cmd, check=True)
           compiled["util"] = main_pcm
 
-          # 编译占位的 timer.cc（模块实现单元）
+          # 编译修正后的 timer.cc（模块实现单元，无自引用）
           cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
