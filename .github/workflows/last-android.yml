@@ -1,0 +1,396 @@
+name: Build Android (Javet-linked, final)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ experimental ]
+
+env:
+  JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
+  NODE_HEADERS: 24.15.0
+  ANDROID_NDK_VERSION: r30-beta1
+  ANDROID_NDK_HOME: /tmp/android-ndk
+
+jobs:
+  build-android:
+    name: Build Android (${{ matrix.abi }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            triplet: aarch64-linux-android
+            ndk_api: 24
+            download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
+          - abi: x86_64
+            triplet: x86_64-linux-android
+            ndk_api: 24
+            download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
+
+    env:
+      TRIPLET: ${{ matrix.triplet }}
+      ABI: ${{ matrix.abi }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
+
+      - name: 准备独立的 Boost 头文件目录
+        run: |
+          mkdir -p /tmp/host-boost-headers
+          cp -r /usr/include/boost /tmp/host-boost-headers/boost
+
+      - name: 安装 CMake 4.0.0
+        run: |
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
+          sudo bash cmake.sh --prefix=/usr/local --skip-license
+          cmake --version
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v5
+      - name: 安装 npm 依赖并编译 TypeScript
+        run: |
+          pnpm install --frozen-lockfile
+          npx tsc -b
+
+      - name: 下载并配置 Android NDK (r30-beta1)
+        run: |
+          mkdir -p $ANDROID_NDK_HOME
+          curl -fsSL https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip -o ndk.zip
+          unzip -q ndk.zip -d /tmp
+          mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+
+      - name: 安装 Playwright
+        run: pnpm add -D -w playwright
+
+      - name: 安装 Playwright 浏览器
+        run: npx playwright install chromium
+
+      - name: 下载 Javet SO (headless)
+        continue-on-error: true
+        run: |
+          cat > download.cjs << 'SCRIPT_END'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const url = process.env.DOWNLOAD_URL;
+            try {
+              const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: 60000 }),
+                page.goto(url, { waitUntil: 'networkidle' })
+              ]);
+              await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
+              console.log('下载成功');
+            } catch (e) {
+              console.error('下载失败，继续构建:', e.message);
+            } finally {
+              await browser.close();
+            }
+          })()
+          SCRIPT_END
+          mkdir -p deps/javet
+          node download.cjs
+        env:
+          DOWNLOAD_URL: ${{ matrix.download_url }}
+          JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
+
+      - name: 下载 Node.js 头文件
+        run: |
+          if [ -f scripts/nodejs_select ]; then
+            bash scripts/nodejs_select "deps/nodejs/${{ env.NODE_HEADERS }}"
+          else
+            mkdir -p deps/nodejs
+            curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
+          fi
+
+      - name: 将 Node 头文件复制到各子包预期位置
+        run: |
+          mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
+          mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
+
+      - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
+        run: |
+          touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+          touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+          touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+
+      - name: 移除不兼容的 CMake 属性和平台限制
+        run: |
+          find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/Unknown host platform/s/^/#/' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
+          find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
+
+      - name: 配置 CMake
+        shell: bash
+        run: |
+          mkdir -p fake-boost/lib/cmake/Boost
+          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
+          add_library(Boost::boost INTERFACE IMPORTED)
+          set_target_properties(Boost::boost PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
+          )
+          set(Boost_FOUND TRUE)
+          set(Boost_INCLUDE_DIRS /usr/include)
+          set(Boost_LIBRARIES "")
+          set(Boost_VERSION 1.83.0)
+          BOOST_EOF
+          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'BOOST_VER_EOF'
+          set(PACKAGE_VERSION 1.83.0)
+          set(PACKAGE_VERSION_COMPATIBLE TRUE)
+          BOOST_VER_EOF
+
+          mkdir -p "${PWD}/build/module_cache"
+
+          cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
+          include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
+          set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
+          set(ANDROID_STL c++_shared)
+          set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
+          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
+          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
+          NDK_EOF
+
+          AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
+          V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
+
+          cmake \
+            -S "${PWD}" \
+            -B "${PWD}/build" \
+            -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
+            -DCMAKE_TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
+            -DANDROID_STL=c++_shared \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MAKE_PROGRAM=ninja \
+            -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
+            -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
+            -DV8_LIBRARY_TYPE=shared \
+            -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
+            -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
+            -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
+            -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
+            -DIVM_INSTALL=copy \
+            -G Ninja
+
+      - name: 修复源码（补全所有缺失的分区导入）
+        shell: bash
+        run: |
+          echo "修复源码: 强制修正所有 module 文件并补全 import 语句..."
+          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+          NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
+          mkdir -p "${NDK_CXX_HEADERS}/bits"
+          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
+          #include <cstdlib>
+          #include <cstdint>
+          #include <cstddef>
+          #include <cstring>
+          #include <cwchar>
+          #include <cstdio>
+          #include <cassert>
+          #include <algorithm>
+          #include <array>
+          #include <chrono>
+          #include <concepts>
+          #include <condition_variable>
+          #include <deque>
+          #include <exception>
+          #include <forward_list>
+          #include <functional>
+          #include <initializer_list>
+          #include <iomanip>
+          #include <iostream>
+          #include <iterator>
+          #include <limits>
+          #include <list>
+          #include <map>
+          #include <memory>
+          #include <mutex>
+          #include <new>
+          #include <numeric>
+          #include <optional>
+          #include <queue>
+          #include <random>
+          #include <ratio>
+          #include <set>
+          #include <shared_mutex>
+          #include <span>
+          #include <sstream>
+          #include <stack>
+          #include <stdexcept>
+          #include <stop_token>
+          #include <string>
+          #include <string_view>
+          #include <source_location>
+          #include <tuple>
+          #include <type_traits>
+          #include <unordered_map>
+          #include <unordered_set>
+          #include <utility>
+          #include <variant>
+          #include <vector>
+          #include <cmath>
+          #include <compare>
+          #include <ranges>
+          #include <bit>
+          #include <version>
+          STD_HEADER
+          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+          for f in $(grep -rl 'module util' packages/); do
+            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
+            sed -i '/^module;$/d' "$f"
+            sed -i '1i\module;' "$f"
+            sed -i '2i\#include <bits/stdc++.h>' "$f"
+          done
+
+          # regular_return.cc 和 bind.cc 需要 type_traits.transform
+          for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
+            sed -i '/^import :type_traits\.transform;$/d' "$file"
+            sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
+          done
+          # bind.cc 额外需要 function_traits 和 type_traits 聚合分区
+          sed -i '/^export module util:functional\.bind;$/a\import :type_traits.function_traits;' packages/utility/functional/bind.cc
+          sed -i '/^export module util:functional\.bind;$/a\import :type_traits;' packages/utility/functional/bind.cc
+
+          # lockable.cc 需要 type_traits.type_of 和 utility
+          sed -i '/^export module util:platform\.lockable;$/a\import :type_traits.type_of;' packages/utility/platform/lockable.cc
+
+          # stop_token.cc 需要 functional（可能已有，但确认一下）
+          sed -i '/^export module util:platform\.stop_token;$/a\import :functional;' packages/utility/platform/stop_token.cc
+
+          # timer.cc 需要 functional 和 lockable
+          sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
+          sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
+
+          # container/sealed_map.cc 可能需要 functional 等，但之前已处理
+
+          # ***** 修复 timer.cc 的 std::jthread 问题 *****
+          # 移除模块声明（转为普通文件）
+          sed -i 's/^module util;/\/\/ module util;/' packages/utility/platform/timer.cc
+          # 替换 jthread 为 thread
+          sed -i 's/std::jthread/std::thread/g' packages/utility/platform/timer.cc
+          # 确保包含 <thread>
+          sed -i '1i#include <thread>' packages/utility/platform/timer.cc
+
+      - name: 清理 ninja 中的不兼容标志
+        run: |
+          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
+          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+
+      - name: 完整编译 utility 模块（全量传递所有已编译 PCM）
+        working-directory: ${{ github.workspace }}
+        shell: python3 {0}
+        run: |
+          import os, subprocess
+
+          SRC_ROOT = os.getcwd()
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
+                       f"-isystem /tmp/host-boost-headers -isystem {SRC_ROOT}/packages/utility/include " \
+                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG"
+
+          UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
+          PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
+          os.makedirs(PCM_DIR, exist_ok=True)
+
+          compiled = {}
+
+          def cc(rel, part=None):
+              src = os.path.join(UTIL_DIR, rel)
+              pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
+              obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+
+              extra = []
+              for name, path in compiled.items():
+                  extra.append(f"-fmodule-file=util:{name}={path}")
+
+              if pcm:
+                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
+                  print(f"PCM: {part}")
+                  subprocess.run(cmd, check=True)
+                  compiled[part] = pcm
+
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
+              print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
+              subprocess.run(cmd, check=True)
+
+          # 精确编译顺序
+          cc("type_traits/transform.cc", "type_traits.transform")
+          cc("type_traits/type_of.cc", "type_traits.type_of")
+          cc("functional/elide.cc", "functional.elide")
+          cc("functional/flat_tuple.cc", "functional.flat_tuple")
+          cc("memory/comparator.cc", "memory.comparator")
+          cc("memory/noinit_allocator.cc", "memory.noinit_allocator")
+          cc("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
+          cc("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
+          cc("container/tinker_queue.cc", "container.tinker_queue")
+          cc("utility/constant_wrapper.cc", "utility.constant_wrapper")
+          cc("utility/facade.cc", "utility.facade")
+          cc("utility/hash.cc", "utility.hash")
+          cc("utility/ranges.cc", "utility.ranges")
+          cc("platform/timer.h.cc", "platform.timer")
+          cc("type_traits/type_pack.cc", "type_traits.type_pack")
+          cc("type_traits/function_traits.cc", "type_traits.function_traits")
+          cc("utility/string.cc", "utility.string")
+          cc("type_traits/type_traits.cc", "type_traits")
+          cc("utility/covariant_value.cc", "utility.covariant_value")
+          cc("utility/utility.cc", "utility")
+          cc("memory/autorelease_pool.cc", "memory.autorelease_pool")
+          cc("memory/memory.cc", "memory")
+          cc("functional/function_ref.cc", "functional.function_ref")
+          cc("functional/function_constant.cc", "functional.function_constant")
+          cc("functional/regular_return.cc", "functional.regular_return")
+          cc("functional/bind.cc", "functional.bind")
+          cc("functional/functional.cc", "functional")
+          cc("platform/lockable.cc", "platform.lockable")
+          cc("platform/stop_token.cc", "platform.stop_token")
+          cc("container/sealed_map.cc", "container.sealed_map")
+
+          # 编译已经修复的 timer.cc（作为普通文件，无 PCM）
+          cc("platform/timer.cc")
+
+          main_pcm = os.path.join(PCM_DIR, "util.pcm")
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
+          for pname, ppath in compiled.items():
+              cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+          print("主模块 PCM: util")
+          subprocess.run(cmd, check=True)
+
+          print("utility 模块编译完成")
+
+      - name: 构建最终目标
+        run: ninja -C build backend_napi_v8
+
+      - name: 验证产物
+        if: success()
+        run: |
+          ls -lh build/packages/backend_napi_v8/
+          file build/packages/backend_napi_v8/backend_napi_v8.node
+
+      - uses: actions/upload-artifact@v6
+        if: success()
+        with:
+          name: isolated-vm-android-${{ matrix.abi }}
+          path: build/packages/backend_napi_v8/artifacts
+          if-no-files-found: error
