@@ -33,12 +33,15 @@ add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linu
 -- ========== 项目内部 include ==========
 add_includedirs(path.join(workspace, "packages/utility/include"))
 add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
+-- 关键：包含自动生成头文件的目录
+add_includedirs(path.join(workspace, "packages/backend_napi_v8/runtime"))
 
 -- 强制通过编译标志传递
 add_cxxflags("-I" .. path.join(nodejs_base, "src"))
 add_cxxflags("-I" .. path.join(nodejs_base, "deps/v8/include"))
 add_cxxflags("-I" .. path.join(nodejs_base, "deps/uv/include"))
 add_cxxflags("-I" .. path.join(nodejs_base, "include/node"))
+add_cxxflags("-I" .. path.join(workspace, "packages/backend_napi_v8/runtime"))
 
 add_linkdirs("deps/javet")
 
@@ -52,7 +55,7 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 排除 node_modules 和 test/tests 目录，只编译当前包自身源码
+-- 排除 node_modules 和 test/tests 目录
 function exclude_extra()
     remove_files("packages/*/node_modules/**")
     remove_files("packages/*/test/**")
