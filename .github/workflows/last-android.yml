@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全分区导入并修复 timer.cc 的 std::jthread）
+      - name: 修复源码（补全分区导入、修复 GCC 扩展和 std::jthread）
         shell: bash
         run: |
           echo "修复源码..."
@@ -251,6 +251,8 @@ jobs:
           STD_HEADER
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+          # 修复 meta/algorithm.cc 中的 GCC 扩展
+          sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
           
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
@@ -282,7 +284,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（补全 meta.algorithm 等遗漏分区）
+      - name: 完整编译 utility 模块（显式依赖传递）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -305,11 +307,15 @@ jobs:
 
           compiled = {}
 
-          def cc(rel, part=None, is_interface=False):
+          def cc(rel, part=None, is_interface=False, deps=None):
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if (part and is_interface) else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               extra = [f"-fmodule-file=util:{name}={path}" for name, path in compiled.items()]
+              if deps:
+                  for d in deps:
+                      if d in compiled:
+                          extra.append(f"-fmodule-file=util:{d}={compiled[d]}")
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: {part}")
@@ -319,7 +325,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 模块接口分区（按依赖顺序）
+          # 模块接口分区
           cc("type_traits/transform.cc", "type_traits.transform", True)
           cc("type_traits/type_of.cc", "type_traits.type_of", True)
           cc("functional/elide.cc", "functional.elide", True)
@@ -350,11 +356,10 @@ jobs:
           cc("platform/lockable.cc", "platform.lockable", True)
           cc("platform/stop_token.cc", "platform.stop_token", True)
           cc("container/sealed_map.cc", "container.sealed_map", True)
-          # 补全遗漏的分区
-          cc("meta/algorithm.cc", "meta.algorithm", True)
           cc("utility/variant.cc", "utility.variant", True)
+          # meta.algorithm 需要显式依赖 type_traits.type_pack 和 utility
+          cc("meta/algorithm.cc", "meta.algorithm", True, deps=["type_traits.type_pack", "utility"])
 
-          # 先生成主模块 PCM
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
                  os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
@@ -364,7 +369,6 @@ jobs:
           subprocess.run(cmd, check=True)
           compiled["util"] = main_pcm
 
-          # 编译模块实现单元 timer.cc
           cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
