@@ -22,11 +22,11 @@ jobs:
           - abi: arm64-v8a
             triplet: aarch64-linux-android
             ndk_api: 24
-            download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
+            download_url: "https://links.8uid.com/d/84c319096122aa995fda42030a259273"
           - abi: x86_64
             triplet: x86_64-linux-android
             ndk_api: 24
-            download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
+            download_url: "https://links.8uid.com/d/2e71a5823391d578840365f0f56941e3"
 
     env:
       TRIPLET: ${{ matrix.triplet }}
