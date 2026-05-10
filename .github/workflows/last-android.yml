@@ -67,7 +67,6 @@ jobs:
           mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      # 解压 Javet SO 分卷
       - name: 解压 Javet SO 分卷
         run: |
           cat libs.7z.001 libs.7z.002 libs.7z.003 > libs.7z
@@ -141,8 +140,8 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 关闭模块扫描，避免 CMake 生成 dyndep 报错
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 module scanning" FORCE)
+          # 关闭模块扫描，避免与手动修复冲突
+          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -274,11 +273,14 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 清理 ninja 中的不兼容标志
+      - name: 清理 ninja 中的不兼容标志并注入必要的包含路径
         run: |
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+          # 为所有 clang++ 和 clang-scan-deps 命令添加 Boost 头文件路径，确保依赖扫描也能找到
+          find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ |& -isystem /tmp/host-boost-headers |g' {} \;
+          find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps |& -isystem /tmp/host-boost-headers |g' {} \;
 
       - name: 构建最终目标
         run: ninja -C build backend_napi_v8
