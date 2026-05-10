@@ -54,12 +54,13 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 排除 node_modules、test、deps 等无关目录
+-- 通用排除函数（用于需要递归添加文件的目标）
 function exclude_extra()
     remove_files("packages/*/node_modules/**")
     remove_files("packages/*/test/**")
     remove_files("packages/*/tests/**")
-    remove_files("packages/*/deps/**")   -- 排除第三方依赖源码
+    remove_files("packages/*/deps/**")
+    remove_files("packages/*/benchmark/**")
 end
 
 target("utility")
@@ -77,8 +78,12 @@ target("nodejs")
     set_kind("static")
     add_deps("auto_js")
     add_defines("NAPI_VERSION=10")
-    add_files("packages/third_party/nodejs/**.cc")
-    exclude_extra()
+    -- 只包含 nodejs 包自身的源文件，不递归进入 deps/nodejs 等目录
+    add_files("packages/third_party/nodejs/js_native_api.cc")
+    add_files("packages/third_party/nodejs/js_native_api_types.cc")
+    add_files("packages/third_party/nodejs/node_api.cc")
+    add_files("packages/third_party/nodejs/nodejs.cc")
+    add_files("packages/third_party/nodejs/uv.cc")
 
 target("nodejs_v8")
     set_kind("static")
