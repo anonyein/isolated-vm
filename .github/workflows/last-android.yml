@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全所有缺失的分区导入）
+      - name: 修复源码（补全所有缺失的分区导入并修复特定文件）
         shell: bash
         run: |
           echo "修复源码: 强制修正所有 module 文件并补全 import 语句..."
@@ -263,29 +263,22 @@ jobs:
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
           done
-          # bind.cc 额外需要 function_traits 和 type_traits 聚合分区
           sed -i '/^export module util:functional\.bind;$/a\import :type_traits.function_traits;' packages/utility/functional/bind.cc
           sed -i '/^export module util:functional\.bind;$/a\import :type_traits;' packages/utility/functional/bind.cc
-
-          # lockable.cc 需要 type_traits.type_of 和 utility
           sed -i '/^export module util:platform\.lockable;$/a\import :type_traits.type_of;' packages/utility/platform/lockable.cc
-
-          # stop_token.cc 需要 functional（可能已有，但确认一下）
           sed -i '/^export module util:platform\.stop_token;$/a\import :functional;' packages/utility/platform/stop_token.cc
-
-          # timer.cc 需要 functional 和 lockable
+          sed -i '/^export module util:platform\.stop_token;$/a\import :utility;' packages/utility/platform/stop_token.cc
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # container/sealed_map.cc 可能需要 functional 等，但之前已处理
-
-          # ***** 修复 timer.cc 的 std::jthread 问题 *****
-          # 移除模块声明（转为普通文件）
-          sed -i 's/^module util;/\/\/ module util;/' packages/utility/platform/timer.cc
-          # 替换 jthread 为 thread
+          # 修复 timer.cc 的 std::jthread 问题
           sed -i 's/std::jthread/std::thread/g' packages/utility/platform/timer.cc
-          # 确保包含 <thread>
-          sed -i '1i#include <thread>' packages/utility/platform/timer.cc
+          sed -i '/^module;$/d' packages/utility/platform/timer.cc
+          sed -i '/^#include <bits\/stdc++.h>$/d' packages/utility/platform/timer.cc
+          sed -i '1i\#include <bits/stdc++.h>' packages/utility/platform/timer.cc
+          if ! grep -q '^#include <thread>' packages/utility/platform/timer.cc; then
+            sed -i '2i\#include <thread>' packages/utility/platform/timer.cc
+          fi
 
       - name: 清理 ninja 中的不兼容标志
         run: |
@@ -293,7 +286,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（全量传递所有已编译 PCM）
+      - name: 完整编译 utility 模块（精确顺序 + 普通文件处理）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -320,22 +313,17 @@ jobs:
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-
-              extra = []
-              for name, path in compiled.items():
-                  extra.append(f"-fmodule-file=util:{name}={path}")
-
+              extra = [f"-fmodule-file=util:{name}={path}" for name, path in compiled.items()]
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: {part}")
                   subprocess.run(cmd, check=True)
                   compiled[part] = pcm
-
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 精确编译顺序
+          # 精确编译顺序（除 timer.cc 外）
           cc("type_traits/transform.cc", "type_traits.transform")
           cc("type_traits/type_of.cc", "type_traits.type_of")
           cc("functional/elide.cc", "functional.elide")
@@ -367,7 +355,7 @@ jobs:
           cc("platform/stop_token.cc", "platform.stop_token")
           cc("container/sealed_map.cc", "container.sealed_map")
 
-          # 编译已经修复的 timer.cc（作为普通文件，无 PCM）
+          # 普通文件：timer.cc（不生成 PCM）
           cc("platform/timer.cc")
 
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
