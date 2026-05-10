@@ -3,14 +3,16 @@ set_project("isolated-vm")
 set_version("0.0.1")
 add_rules("mode.release")
 
+-- 全局启用 C++20 模块支持，并强制公开所有模块接口
 set_policy("build.c++.modules", true)
+set_policy("build.c++.modules.public", true)
 
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
--- Node.js 头文件直接使用 /tmp 解压目录
+-- Node.js 头文件（/tmp 直接引用）
 local node_ver = os.getenv("NODE_HEADERS") or "24.15.0"
 local node_dir = path.join("/tmp", "node-v" .. node_ver)
 
@@ -19,18 +21,13 @@ add_includedirs(path.join(node_dir, "deps/v8/include"), {public = true})
 add_includedirs(path.join(node_dir, "deps/uv/include"), {public = true})
 add_includedirs(path.join(node_dir, "include/node"), {public = true})
 
--- 项目内部路径
 add_includedirs(path.join(workspace, "packages/utility/include"))
 add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
 add_includedirs(path.join(workspace, "packages/backend_napi_v8/runtime"))
 
--- Boost
 add_includedirs("/tmp/host-boost-headers")
-
--- NDK C++ 标准库
 add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1")
 
--- 编译器标志
 add_cxxflags("-I" .. path.join(node_dir, "src"))
 add_cxxflags("-I" .. path.join(node_dir, "deps/v8/include"))
 add_cxxflags("-I" .. path.join(node_dir, "deps/uv/include"))
@@ -49,7 +46,7 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 过滤器：排除 node_modules、deps、test、benchmark
+-- 过滤器
 local function filter_files(file)
     if file:find("node_modules") or file:find("/deps/") or file:find("/test/") or file:find("/tests/") or file:find("/benchmark/") then
         return false
@@ -60,6 +57,8 @@ end
 target("utility")
     set_kind("static")
     add_files("packages/utility/**.cc", {filter = filter_files})
+    -- 公开模块接口，保证依赖方能够找到 util 的模块映射
+    set_policy("build.c++.modules.public", true)
 
 target("auto_js")
     set_kind("static")
@@ -94,6 +93,7 @@ target("v8_js")
 
 target("isolated_vm")
     set_kind("static")
+    -- 显式依赖 utility，并保证能访问 util 模块接口
     add_deps("utility", "v8_js", "napi_js")
     add_files("packages/isolated-vm/addon/**.cc", {filter = filter_files})
     add_files("packages/backend_napi_v8/api/**.cc", {filter = filter_files})
