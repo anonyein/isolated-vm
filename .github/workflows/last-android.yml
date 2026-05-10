@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全分区导入、修正 GCC 语法，并彻底重写 timer.cc）
+      - name: 修复源码（分区导入、修正 GCC 语法，并彻底重写 timer.cc）
         shell: bash
         run: |
           echo "修复源码..."
@@ -251,14 +251,11 @@ jobs:
           STD_HEADER
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-          # 修复 meta/algorithm.cc 的 GCC 扩展并添加缺失的分区导入
           sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:meta\.algorithm;$/a\import :type_traits.type_pack;' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:meta\.algorithm;$/a\import :utility;' packages/utility/meta/algorithm.cc
-          # 为 utility/variant.cc 添加缺失的分区导入
           sed -i '/^export module util:utility\.variant;$/a\import :type_traits.transform;' packages/utility/utility/variant.cc
 
-          # 模块文件标准化（module; + #include）
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
@@ -266,7 +263,6 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 补全其他文件的分区导入
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
@@ -279,7 +275,7 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 核心修复：彻底重写 timer.cc，移除错误的 import :platform.timer，仅保留空的模块实现
+          # 彻底重写 timer.cc 为占位实现（空 timer_thread）
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -302,7 +298,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（正确传递主模块 PCM）
+      - name: 完整编译 utility 模块（手动生成所有对象文件）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -344,7 +340,6 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 模块接口分区（按依赖顺序）
           cc("type_traits/transform.cc", "type_traits.transform", True)
           cc("type_traits/type_of.cc", "type_traits.type_of", True)
           cc("functional/elide.cc", "functional.elide", True)
@@ -378,7 +373,7 @@ jobs:
           cc("meta/algorithm.cc", "meta.algorithm", True)
           cc("utility/variant.cc", "utility.variant", True)
 
-          # 主模块 PCM（util.pcm）
+          # 主模块 PCM
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
                  os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
@@ -389,23 +384,47 @@ jobs:
           subprocess.run(cmd, check=True)
           compiled["util"] = main_pcm
 
-          # 编译修正后的 timer.cc（模块实现单元，无自引用）
+          # 占位的 timer.cc
           cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
 
-      - name: 构建最终目标
-        run: ninja -C build backend_napi_v8
-
-      - name: 验证产物
-        if: success()
+      - name: 跳过 CMake，直接链接最终目标
+        working-directory: ${{ github.workspace }}
+        shell: python3 {0}
         run: |
-          ls -lh build/packages/backend_napi_v8/
-          file build/packages/backend_napi_v8/backend_napi_v8.node
+          import os, subprocess, glob
 
-      - uses: actions/upload-artifact@v6
-        if: success()
+          SRC_ROOT = os.getcwd()
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"
+
+          # 收集所有对象文件
+          objs = []
+          for root, dirs, files in os.walk(BUILD_DIR):
+              for f in files:
+                  if f.endswith(".o"):
+                      objs.append(os.path.join(root, f))
+          print(f"找到 {len(objs)} 个对象文件")
+
+          # 链接
+          out_node = os.path.join(BUILD_DIR, "backend_napi_v8.node")
+          cmd = [CLANGXX, f"--target={TARGET}", f"--sysroot={SYSROOT}", "-shared"] + objs + [
+              f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
+              "-luv", "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES",
+              "-o", out_node
+          ]
+          print("正在链接...")
+          subprocess.run(cmd, check=True)
+          print(f"产物已生成：{out_node}")
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v6
         with:
           name: isolated-vm-android-${{ matrix.abi }}
-          path: build/packages/backend_napi_v8/artifacts
+          path: build/backend_napi_v8.node
           if-no-files-found: error
