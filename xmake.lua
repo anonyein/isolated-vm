@@ -8,8 +8,10 @@ set_policy("build.c++.modules", true)
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
+set_policy("build.c++.modules", true)
 set_policy("build.c++.modules.fallbackscanner", true)
 set_policy("build.c++.modules.clang.fallbackscanner", true)
+set_policy("build.c++.modules.std", false)   -- 禁用标准库模块，避免预处理错误
 
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
