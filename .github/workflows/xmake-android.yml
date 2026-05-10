@@ -228,10 +228,13 @@ jobs:
           #endif
           EOF
           fi
+        
+      - name: 删除所有软链接（防止模块扫描误入 node_modules）
+        run: find . -type l -delete
 
       - name: 配置 xmake
         run: xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} -m release
-
+        
       - name: 构建
         run: xmake build -v backend_napi_v8
 
