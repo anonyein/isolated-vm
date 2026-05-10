@@ -4,7 +4,8 @@ set_version("0.0.1")
 add_rules("mode.release")
 
 set_policy("build.c++.modules", true)
-set_policy("build.c++.modules.clang.fallbackscanner", true)
+-- 关键：禁用自动构建标准库模块（std.cppm）
+set_policy("build.c++.modules.std", false)
 
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
@@ -41,7 +42,6 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 无需 filter_files，因为软链接已删除
 target("utility")
     set_kind("static")
     add_files("packages/utility/**.cc")
