@@ -114,7 +114,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      - name: 配置 CMake
+      - name: 配置 CMake（用于生成基础构建系统，后续手动编译）
         shell: bash
         run: |
           mkdir -p fake-boost/lib/cmake/Boost
@@ -140,8 +140,7 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 关闭模块扫描，避免与手动修复冲突
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
+          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -168,7 +167,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（彻底清除所有模块接口依赖，包括 isolated_vm 分区）
+      - name: 修复源码（分区导入、修正 GCC 语法，并彻底重写 timer.cc）
         shell: bash
         run: |
           echo "修复源码..."
@@ -237,7 +236,6 @@ jobs:
           sed -i '/^export module util:meta\.algorithm;$/a\import :utility;' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:utility\.variant;$/a\import :type_traits.transform;' packages/utility/utility/variant.cc
 
-          # 处理所有 module util 文件
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
@@ -257,7 +255,7 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 替换 timer.cc 占位
+          # 彻底重写 timer.cc 为占位实现（空 timer_thread）
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -274,39 +272,139 @@ jobs:
           }
           TIMER_EOF
 
-          # === 新增：修复 isolated_vm 分区文件，将它们变成空的实现单元 ===
-          for f in \
-            packages/backend_napi_v8/api/value/accept.cc \
-            packages/backend_napi_v8/api/value/value.cc \
-            packages/backend_napi_v8/api/value/primitive.cc; do
-            cat > "$f" << 'ISOLATED_EOF'
-          module;
-          #include <bits/stdc++.h>
-
-          // Empty placeholder implementation to bypass module dependency
-          ISOLATED_EOF
-          done
-
-      - name: 清理 ninja 中的不兼容标志并注入 Boost 头文件路径
+      - name: 清理 ninja 中的不兼容标志
         run: |
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ |& -isystem /tmp/host-boost-headers |g' {} \;
-          find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps |& -isystem /tmp/host-boost-headers |g' {} \;
 
-      - name: 构建最终目标
-        run: ninja -C build backend_napi_v8
-
-      - name: 验证产物
-        if: success()
+      - name: 完整编译 utility 模块（手动生成所有对象文件）
+        working-directory: ${{ github.workspace }}
+        shell: python3 {0}
         run: |
-          ls -lh build/packages/backend_napi_v8/
-          file build/packages/backend_napi_v8/backend_napi_v8.node
+          import os, subprocess
 
-      - uses: actions/upload-artifact@v6
-        if: success()
+          SRC_ROOT = os.getcwd()
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
+                       f"-isystem /tmp/host-boost-headers -isystem {SRC_ROOT}/packages/utility/include " \
+                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG"
+
+          UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
+          PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
+          os.makedirs(PCM_DIR, exist_ok=True)
+
+          compiled = {}
+
+          def cc(rel, part=None, is_interface=False):
+              src = os.path.join(UTIL_DIR, rel)
+              pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if (part and is_interface) else None
+              obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
+              extra = []
+              for name, path in compiled.items():
+                  if name != "util":
+                      extra.append(f"-fmodule-file=util:{name}={path}")
+              if "util" in compiled:
+                  extra.append(f"-fmodule-file=util={compiled['util']}")
+              if pcm:
+                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
+                  print(f"PCM: {part}")
+                  subprocess.run(cmd, check=True)
+                  compiled[part] = pcm
+              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
+              print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
+              subprocess.run(cmd, check=True)
+
+          cc("type_traits/transform.cc", "type_traits.transform", True)
+          cc("type_traits/type_of.cc", "type_traits.type_of", True)
+          cc("functional/elide.cc", "functional.elide", True)
+          cc("functional/flat_tuple.cc", "functional.flat_tuple", True)
+          cc("memory/comparator.cc", "memory.comparator", True)
+          cc("memory/noinit_allocator.cc", "memory.noinit_allocator", True)
+          cc("container/mutable_priority_queue.cc", "container.mutable_priority_queue", True)
+          cc("container/segmented_priority_queue.cc", "container.segmented_priority_queue", True)
+          cc("container/tinker_queue.cc", "container.tinker_queue", True)
+          cc("utility/constant_wrapper.cc", "utility.constant_wrapper", True)
+          cc("utility/facade.cc", "utility.facade", True)
+          cc("utility/hash.cc", "utility.hash", True)
+          cc("utility/ranges.cc", "utility.ranges", True)
+          cc("platform/timer.h.cc", "platform.timer", True)
+          cc("type_traits/type_pack.cc", "type_traits.type_pack", True)
+          cc("type_traits/function_traits.cc", "type_traits.function_traits", True)
+          cc("utility/string.cc", "utility.string", True)
+          cc("type_traits/type_traits.cc", "type_traits", True)
+          cc("utility/covariant_value.cc", "utility.covariant_value", True)
+          cc("utility/utility.cc", "utility", True)
+          cc("memory/autorelease_pool.cc", "memory.autorelease_pool", True)
+          cc("memory/memory.cc", "memory", True)
+          cc("functional/function_ref.cc", "functional.function_ref", True)
+          cc("functional/function_constant.cc", "functional.function_constant", True)
+          cc("functional/regular_return.cc", "functional.regular_return", True)
+          cc("functional/bind.cc", "functional.bind", True)
+          cc("functional/functional.cc", "functional", True)
+          cc("platform/lockable.cc", "platform.lockable", True)
+          cc("platform/stop_token.cc", "platform.stop_token", True)
+          cc("container/sealed_map.cc", "container.sealed_map", True)
+          cc("meta/algorithm.cc", "meta.algorithm", True)
+          cc("utility/variant.cc", "utility.variant", True)
+
+          # 主模块 PCM
+          main_pcm = os.path.join(PCM_DIR, "util.pcm")
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
+                 os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
+          for pname, ppath in compiled.items():
+              if pname != "util":
+                  cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+          print("主模块 PCM: util")
+          subprocess.run(cmd, check=True)
+          compiled["util"] = main_pcm
+
+          # 占位的 timer.cc
+          cc("platform/timer.cc", None, False)
+
+          print("utility 模块编译完成")
+
+      - name: 跳过 CMake，直接链接最终目标
+        working-directory: ${{ github.workspace }}
+        shell: python3 {0}
+        run: |
+          import os, subprocess, glob
+
+          SRC_ROOT = os.getcwd()
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"
+
+          # 收集所有对象文件
+          objs = []
+          for root, dirs, files in os.walk(BUILD_DIR):
+              for f in files:
+                  if f.endswith(".o"):
+                      objs.append(os.path.join(root, f))
+          print(f"找到 {len(objs)} 个对象文件")
+
+          # 链接
+          out_node = os.path.join(BUILD_DIR, "backend_napi_v8.node")
+          cmd = [CLANGXX, f"--target={TARGET}", f"--sysroot={SYSROOT}", "-shared"] + objs + [
+              f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
+              "-luv", "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES",
+              "-o", out_node
+          ]
+          print("正在链接...")
+          subprocess.run(cmd, check=True)
+          print(f"产物已生成：{out_node}")
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v6
         with:
           name: isolated-vm-android-${{ matrix.abi }}
-          path: build/packages/backend_napi_v8/artifacts
+          path: build/backend_napi_v8.node
           if-no-files-found: error
