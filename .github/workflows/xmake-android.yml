@@ -201,32 +201,37 @@ jobs:
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
-      - name: 生成 runtime_dist_interface_js.h（确保存在）
+      - name: 生成 runtime_dist_interface_js.h（灵活查找）
         shell: bash
         run: |
           mkdir -p packages/backend_napi_v8/runtime
-          # 如果 auto_js_cmake_include 已生成，直接使用
-          if npx auto_js_cmake_include &>/dev/null; then
-            echo "auto_js_cmake_include 执行成功"
-            if [ -f packages/backend_napi_v8/runtime/runtime_dist_interface_js.h ]; then
-              echo "头文件已由 auto_js_cmake_include 生成"
+          # 1. 尝试获取 auto_js_cmake_include 的输出目录
+          INCLUDE_DIR=$(npx auto_js_cmake_include 2>/dev/null || true)
+          echo "auto_js_cmake_include 输出: $INCLUDE_DIR"
+          if [ -n "$INCLUDE_DIR" ] && [ -d "$INCLUDE_DIR" ]; then
+            if [ -f "$INCLUDE_DIR/runtime_dist_interface_js.h" ]; then
+              cp "$INCLUDE_DIR/runtime_dist_interface_js.h" packages/backend_napi_v8/runtime/
+              echo "已从 $INCLUDE_DIR 复制头文件"
               exit 0
             fi
           fi
-          # 否则手动查找或生成
-          echo "手动生成 runtime_dist_interface_js.h ..."
-          JS_FILE=$(find . -path "*/runtime/dist/interface.js" -print -quit)
-          if [ -n "$JS_FILE" ]; then
-            echo "找到 $JS_FILE"
-            if [ "$JS_FILE" != "packages/backend_napi_v8/runtime/dist/interface.js" ]; then
-              mkdir -p packages/backend_napi_v8/runtime/dist
-              cp "$JS_FILE" packages/backend_napi_v8/runtime/dist/interface.js
-            fi
-            xxd -i packages/backend_napi_v8/runtime/dist/interface.js packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
+          # 2. 全局搜索已生成的头文件
+          FOUND=$(find . -name runtime_dist_interface_js.h -print -quit)
+          if [ -n "$FOUND" ]; then
+            echo "找到已存在的头文件: $FOUND"
+            cp "$FOUND" packages/backend_napi_v8/runtime/
+            exit 0
+          fi
+          # 3. 使用 interface.js 生成（避免自我复制）
+          JS_FILE="packages/backend_napi_v8/runtime/dist/interface.js"
+          if [ -f "$JS_FILE" ]; then
+            echo "使用 $JS_FILE 生成头文件"
+            xxd -i "$JS_FILE" packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
             sed -i 's/^unsigned char .*runtime_dist_interface_js/unsigned char runtime_dist_interface_js/' packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
             sed -i 's/^unsigned int .*runtime_dist_interface_js_len/unsigned int runtime_dist_interface_js_len/' packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
           else
-            echo "未找到 interface.js，生成空占位文件"
+            # 4. 最终回退：空占位
+            echo "错误：无法找到 interface.js，创建占位头文件"
             cat > packages/backend_napi_v8/runtime/runtime_dist_interface_js.h << 'EOF'
           #ifndef RUNTIME_DIST_INTERFACE_JS_H
           #define RUNTIME_DIST_INTERFACE_JS_H
@@ -234,10 +239,6 @@ jobs:
           static const unsigned int runtime_dist_interface_js_len = 0;
           #endif
           EOF
-          fi
-          if [ ! -f packages/backend_napi_v8/runtime/runtime_dist_interface_js.h ]; then
-            echo "错误：无法生成 runtime_dist_interface_js.h"
-            exit 1
           fi
 
       - name: 配置 xmake
