@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全分区导入、修复 GCC 扩展和 std::jthread）
+      - name: 修复源码（补全所有缺失的分区导入、修复 GCC 扩展和 std::jthread）
         shell: bash
         run: |
           echo "修复源码..."
@@ -256,6 +256,8 @@ jobs:
           # 为 meta/algorithm.cc 添加缺失的分区导入
           sed -i '/^export module util:meta\.algorithm;$/a\import :type_traits.type_pack;' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:meta\.algorithm;$/a\import :utility;' packages/utility/meta/algorithm.cc
+          # 为 utility/variant.cc 添加缺失的分区导入
+          sed -i '/^export module util:utility\.variant;$/a\import :type_traits.transform;' packages/utility/utility/variant.cc
           
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
@@ -287,7 +289,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（正确的顺序与导入）
+      - name: 完整编译 utility 模块（正确导入与顺序）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -355,9 +357,9 @@ jobs:
           cc("platform/lockable.cc", "platform.lockable", True)
           cc("platform/stop_token.cc", "platform.stop_token", True)
           cc("container/sealed_map.cc", "container.sealed_map", True)
-          # meta.algorithm 依赖 type_traits.type_pack 和 utility（源码已导入）
+          # meta.algorithm 依赖 type_traits.type_pack 和 utility
           cc("meta/algorithm.cc", "meta.algorithm", True)
-          # utility.variant 依赖 meta.algorithm
+          # utility.variant 依赖 meta.algorithm 和 type_traits.transform（已在源码中添加 import）
           cc("utility/variant.cc", "utility.variant", True)
 
           # 主模块
