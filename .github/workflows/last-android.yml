@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全所有缺失的分区导入并保留 timer.cc 模块结构）
+      - name: 修复源码（补全分区导入并修复 timer.cc 的 std::jthread）
         shell: bash
         run: |
           echo "修复源码..."
@@ -252,7 +252,6 @@ jobs:
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
           
-          # 所有模块文件添加 module; 和 #include
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
@@ -260,7 +259,6 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 补全分区导入
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
@@ -273,7 +271,6 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # timer.cc 特殊修复：替换 jthread，添加 <thread>，不破坏模块结构
           sed -i 's/std::jthread/std::thread/g' packages/utility/platform/timer.cc
           if ! grep -q '^#include <thread>' packages/utility/platform/timer.cc; then
             sed -i '2i\#include <thread>' packages/utility/platform/timer.cc
@@ -285,7 +282,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（timer.cc 作为模块实现单元）
+      - name: 完整编译 utility 模块（先主模块，后实现单元）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -354,10 +351,7 @@ jobs:
           cc("platform/stop_token.cc", "platform.stop_token", True)
           cc("container/sealed_map.cc", "container.sealed_map", True)
 
-          # timer.cc 是模块实现单元，不是接口
-          cc("platform/timer.cc", None, False)
-
-          # 主模块接口
+          # *** 先生成主模块 PCM ***
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
                  os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
@@ -365,6 +359,10 @@ jobs:
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("主模块 PCM: util")
           subprocess.run(cmd, check=True)
+          compiled["util"] = main_pcm   # 让后续编译能找到 util
+
+          # *** 编译模块实现单元 timer.cc ***
+          cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
 
