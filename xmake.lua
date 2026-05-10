@@ -1,4 +1,4 @@
--- xmake.lua (fixed)
+-- xmake.lua
 set_project("isolated-vm")
 set_version("0.0.1")
 add_rules("mode.release")
@@ -87,8 +87,8 @@ target("v8_js")
 
 target("isolated_vm")
     set_kind("static")
-    -- 必须直接依赖 nodejs_v8 以获取 v8 模块接口
-    add_deps("utility", "v8_js", "napi_js", "nodejs_v8")
+    -- 显式依赖 auto_js，解决 missing auto_js dependency 错误
+    add_deps("utility", "auto_js", "v8_js", "napi_js", "nodejs_v8")
     add_files("packages/isolated-vm/addon/**.cc", {filter = filter_files})
     add_files("packages/backend_napi_v8/api/**.cc", {filter = filter_files})
 
