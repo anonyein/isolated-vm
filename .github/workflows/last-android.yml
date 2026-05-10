@@ -187,7 +187,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全缺失的分区导入、修复语法错误）
+      - name: 修复源码（分区导入、语法错误，并修复 timer.cc 的线程构造问题）
         shell: bash
         run: |
           echo "修复源码..."
@@ -251,14 +251,14 @@ jobs:
           STD_HEADER
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-          # 修复 meta/algorithm.cc GCC 扩展
+          # 修复 meta/algorithm.cc 中的 GCC 扩展并添加缺失的导入
           sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
-
-          # 补全分区导入
           sed -i '/^export module util:meta\.algorithm;$/a\import :type_traits.type_pack;' packages/utility/meta/algorithm.cc
           sed -i '/^export module util:meta\.algorithm;$/a\import :utility;' packages/utility/meta/algorithm.cc
+          # 为 utility/variant.cc 添加缺失的分区导入
           sed -i '/^export module util:utility\.variant;$/a\import :type_traits.transform;' packages/utility/utility/variant.cc
 
+          # 模块文件标准化（module; + #include）
           for f in $(grep -rl 'module util' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
@@ -266,6 +266,7 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
+          # 补全其他文件的分区导入
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
@@ -278,10 +279,14 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
+          # 替换 std::jthread 为 std::thread，并确保包含 <thread>
           sed -i 's/std::jthread/std::thread/g' packages/utility/platform/timer.cc
           if ! grep -q '^#include <thread>' packages/utility/platform/timer.cc; then
             sed -i '2i\#include <thread>' packages/utility/platform/timer.cc
           fi
+
+          # 核心修复：timer.cc 线程构造，按值捕获 stop_token 改为捕获 this
+          sed -i 's/thread_{\[ & \](std::stop_token stop_token) -> void { loop(stop_token); }}/thread_{\[this\] { auto stop_token = get_token(); loop(stop_token); }}/' packages/utility/platform/timer.cc
 
       - name: 清理 ninja 中的不兼容标志
         run: |
@@ -289,7 +294,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（简化 PCM 传递逻辑）
+      - name: 完整编译 utility 模块（正确传递主模块 PCM）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -317,11 +322,12 @@ jobs:
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if (part and is_interface) else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               extra = []
-              # 传递所有已生成的分区 PCM
+              # 分区 PCM
               for name, path in compiled.items():
-                  extra.append(f"-fmodule-file=util:{name}={path}")
-              # 如果是模块实现单元（is_interface=False 且 part 为 None），额外传递主模块 PCM
-              if not is_interface and part is None and "util" in compiled:
+                  if name != "util":
+                      extra.append(f"-fmodule-file=util:{name}={path}")
+              # 主模块 PCM（如果已生成）
+              if "util" in compiled:
                   extra.append(f"-fmodule-file=util={compiled['util']}")
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -332,7 +338,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 模块接口分区（严格依赖顺序）
+          # 模块接口分区（按依赖顺序）
           cc("type_traits/transform.cc", "type_traits.transform", True)
           cc("type_traits/type_of.cc", "type_traits.type_of", True)
           cc("functional/elide.cc", "functional.elide", True)
@@ -366,17 +372,18 @@ jobs:
           cc("meta/algorithm.cc", "meta.algorithm", True)
           cc("utility/variant.cc", "utility.variant", True)
 
-          # 主模块 PCM
+          # 主模块 PCM（util.pcm）
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
                  os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
           for pname, ppath in compiled.items():
-              cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+              if pname != "util":
+                  cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("主模块 PCM: util")
           subprocess.run(cmd, check=True)
           compiled["util"] = main_pcm
 
-          # 模块实现单元 timer.cc（现在是实现单元，会额外传递 util.pcm）
+          # 编译模块实现单元 timer.cc（stop_token 捕获问题已修复）
           cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
