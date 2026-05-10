@@ -251,6 +251,7 @@ jobs:
           STD_HEADER
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+          # 修复 meta/algorithm.cc GCC 扩展
           sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
 
           # 补全分区导入
@@ -288,7 +289,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（正确传递主模块 PCM）
+      - name: 完整编译 utility 模块（简化 PCM 传递逻辑）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -316,12 +317,11 @@ jobs:
               pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if (part and is_interface) else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               extra = []
-              # 分区 PCM
+              # 传递所有已生成的分区 PCM
               for name, path in compiled.items():
-                  if name != "util":
-                      extra.append(f"-fmodule-file=util:{name}={path}")
-              # 主模块 PCM（如果已生成）
-              if "util" in compiled:
+                  extra.append(f"-fmodule-file=util:{name}={path}")
+              # 如果是模块实现单元（is_interface=False 且 part 为 None），额外传递主模块 PCM
+              if not is_interface and part is None and "util" in compiled:
                   extra.append(f"-fmodule-file=util={compiled['util']}")
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -332,7 +332,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 模块接口分区（严格的依赖顺序）
+          # 模块接口分区（严格依赖顺序）
           cc("type_traits/transform.cc", "type_traits.transform", True)
           cc("type_traits/type_of.cc", "type_traits.type_of", True)
           cc("functional/elide.cc", "functional.elide", True)
@@ -366,18 +366,17 @@ jobs:
           cc("meta/algorithm.cc", "meta.algorithm", True)
           cc("utility/variant.cc", "utility.variant", True)
 
-          # 主模块 PCM（util.pcm）
+          # 主模块 PCM
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
                  os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
           for pname, ppath in compiled.items():
-              if pname != "util":
-                  cmd.append(f"-fmodule-file=util:{pname}={ppath}")
+              cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("主模块 PCM: util")
           subprocess.run(cmd, check=True)
           compiled["util"] = main_pcm
 
-          # 编译模块实现单元 timer.cc（现在能正确传递 util PCM）
+          # 模块实现单元 timer.cc（现在是实现单元，会额外传递 util.pcm）
           cc("platform/timer.cc", None, False)
 
           print("utility 模块编译完成")
