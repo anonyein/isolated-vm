@@ -233,7 +233,7 @@ jobs:
         run: xmake f -p android --ndk=$ANDROID_NDK_HOME -a ${{ matrix.abi }} -m release
 
       - name: 构建
-        run: xmake build backend_napi_v8
+        run: xmake build -v backend_napi_v8
 
       - name: 验证产物
         if: success()
