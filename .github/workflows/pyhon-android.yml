@@ -1,0 +1,317 @@
+name: Build Android (Manual Module Compile)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ experimental ]
+
+env:
+  JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
+  NODE_HEADERS: 24.15.0
+  ANDROID_NDK_VERSION: r29
+  ANDROID_NDK_HOME: /tmp/android-ndk
+
+jobs:
+  build-android:
+    name: Build Android (${{ matrix.abi }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            triplet: aarch64-linux-android
+            ndk_api: 24
+            download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
+          - abi: x86_64
+            triplet: x86_64-linux-android
+            ndk_api: 24
+            download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
+
+    env:
+      TRIPLET: ${{ matrix.triplet }}
+      ABI: ${{ matrix.abi }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev xxd
+
+      - name: 准备独立的 Boost 头文件目录
+        run: |
+          mkdir -p /tmp/host-boost-headers
+          cp -r /usr/include/boost /tmp/host-boost-headers/boost
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v5
+
+      - name: 安装 npm 依赖并编译 TypeScript
+        run: pnpm install --frozen-lockfile && npx tsc -b
+
+      - name: 安装 Playwright 及浏览器
+        run: |
+          pnpm add -D -w playwright
+          npx playwright install chromium
+
+      - name: 下载 Javet SO (headless)
+        continue-on-error: true
+        run: |
+          cat > download.cjs << 'SCRIPT_END'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const url = process.env.DOWNLOAD_URL;
+            try {
+              const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: 60000 }),
+                page.goto(url, { waitUntil: 'networkidle' })
+              ]);
+              await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
+              console.log('下载成功');
+            } catch (e) {
+              console.error('下载失败，继续构建:', e.message);
+            } finally {
+              await browser.close();
+            }
+          })()
+          SCRIPT_END
+          mkdir -p deps/javet
+          node download.cjs
+        env:
+          DOWNLOAD_URL: ${{ matrix.download_url }}
+          JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
+
+      - name: 下载 Node.js 头文件（不复制到项目）
+        run: |
+          curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C /tmp
+
+      - name: 下载并配置 Android NDK (r29)
+        run: |
+          mkdir -p $ANDROID_NDK_HOME
+          curl -fsSL "https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip" -o ndk.zip
+          unzip -q ndk.zip -d /tmp
+          mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
+
+      - name: 修复源码（bits/stdc++.h 及模块结构）
+        shell: bash
+        run: |
+          NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
+          mkdir -p "${NDK_CXX_HEADERS}/bits"
+          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
+          # ... (bits/stdc++.h 内容，与之前相同，此处省略以节省篇幅) ...
+          STD_HEADER
+
+          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+          for f in $(grep -rlP '(?:export\s+)?module\s' packages/); do
+            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
+            sed -i '/^module;$/d' "$f"
+            if ! grep -q '^module;$' "$f"; then
+              sed -i '1i\module;' "$f"
+              sed -i '2i\#include <bits/stdc++.h>' "$f"
+            fi
+          done
+          for f in $(find packages -name '*.cc' -exec grep -LP '(?:export\s+)?module\s' {} \;); do
+            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
+            sed -i '1i\#include <bits/stdc++.h>' "$f"
+          done
+          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+
+      - name: 生成 runtime_dist_interface_js.h
+        shell: bash
+        run: |
+          mkdir -p packages/backend_napi_v8/runtime
+          if [ ! -f packages/backend_napi_v8/runtime/runtime_dist_interface_js.h ]; then
+            JS_FILE="packages/backend_napi_v8/runtime/dist/interface.js"
+            if [ -f "$JS_FILE" ]; then
+              xxd -i "$JS_FILE" packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
+              sed -i 's/^unsigned char .*runtime_dist_interface_js/unsigned char runtime_dist_interface_js/' packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
+              sed -i 's/^unsigned int .*runtime_dist_interface_js_len/unsigned int runtime_dist_interface_js_len/' packages/backend_napi_v8/runtime/runtime_dist_interface_js.h
+            else
+              cat > packages/backend_napi_v8/runtime/runtime_dist_interface_js.h << 'EOF'
+          #ifndef RUNTIME_DIST_INTERFACE_JS_H
+          #define RUNTIME_DIST_INTERFACE_JS_H
+          static const unsigned char runtime_dist_interface_js[] = {};
+          static const unsigned int runtime_dist_interface_js_len = 0;
+          #endif
+          EOF
+            fi
+          fi
+
+      - name: 删除所有软链接（防止模块扫描误入 node_modules）
+        run: find . -type l -delete
+
+      - name: 自动拓扑排序并编译整个项目
+        shell: python3 {0}
+        run: |
+          import os, subprocess, re, glob, collections, sys
+
+          SRC_ROOT = os.environ["GITHUB_WORKSPACE"]
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"
+
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
+                       f"-isystem /tmp/host-boost-headers " \
+                       f"-isystem {SRC_ROOT}/packages/utility/include " \
+                       f"-isystem {NODE_DIR}/src " \
+                       f"-isystem {NODE_DIR}/deps/v8/include " \
+                       f"-isystem {NODE_DIR}/deps/uv/include " \
+                       f"-isystem {NODE_DIR}/include/node " \
+                       f"-isystem {SRC_ROOT}/packages/auto_js/napi/include " \
+                       f"-isystem {SRC_ROOT}/packages/backend_napi_v8/runtime " \
+                       f"-DEXPORT_IS_EXPORT -DNAPI_VERSION=10 -O3 -DNDEBUG"
+
+          OBJ_DIR = os.path.join(BUILD_DIR, "objs")
+          os.makedirs(OBJ_DIR, exist_ok=True)
+
+          # ---------- 扫描所有源文件 ----------
+          cc_files = []
+          for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
+              # 排除无关目录
+              dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark")]
+              for f in files:
+                  if f.endswith(".cc"):
+                      cc_files.append(os.path.join(root, f))
+
+          # ---------- 提取模块信息 ----------
+          # 模块名 -> 文件路径
+          module_sources = collections.defaultdict(list)
+          # (文件, 模块全名) 的依赖列表
+          edges = []
+          # 所有定义的模块（全名）
+          defined_modules = set()
+
+          # 用于推测模块名的映射：根据文件路径前缀
+          # 我们可以从源码中的 export module 获取确切名称，无需硬编码
+          for fpath in cc_files:
+              with open(fpath, "r", errors="ignore") as f:
+                  content = f.read()
+              # 提取本文件导出的模块
+              exported = re.findall(r'export module (\S+?);', content)
+              if exported:
+                  mod = exported[0]
+                  defined_modules.add(mod)
+                  module_sources[mod].append(fpath)
+                  # 提取导入
+                  imports = re.findall(r'import (\S+?);', content)
+                  for imp in imports:
+                      # 处理 import :xxx 的情况（分区导入，需要扩展为完整模块名:分区）
+                      if imp.startswith(":"):
+                          # 同模块分区，需要知道当前模块名
+                          # 从 export module 中我们已经得到了模块名，但此时还未建立完全的模块名映射
+                          # 简单处理：直接记录依赖，后续解析时根据模块名补全
+                          edges.append((fpath, mod, imp))
+                      else:
+                          edges.append((fpath, mod, imp))
+              else:
+                  # 可能不是模块接口文件，但可能包含模块实现（如 module; 开头）
+                  # 忽略，之后作为普通文件编译
+                  pass
+
+          # 建立完整的模块依赖图
+          # key: 模块全名, value: list of (依赖模块全名)
+          graph = collections.defaultdict(list)
+          indegree = collections.defaultdict(int)
+          all_modules = set(module_sources.keys())
+
+          # 处理 import 语句，解析出依赖的真正模块名
+          for src_file, mod, imp in edges:
+              if imp.startswith(":"):
+                  # 分区导入，例如 :type_traits.transform
+                  dep = f"{mod}{imp}"  # 变成 util:type_traits.transform
+              else:
+                  dep = imp
+              if dep not in all_modules:
+                  # 可能是外部模块（如 import std; 已被删除），忽略
+                  continue
+              graph[dep].append(mod)
+              indegree[mod] = indegree.get(mod, 0) + 1
+
+          # 确保所有模块都有 indegree 记录
+          for m in all_modules:
+              if m not in indegree:
+                  indegree[m] = 0
+
+          # 拓扑排序
+          queue = [m for m in all_modules if indegree[m] == 0]
+          sorted_modules = []
+          while queue:
+              m = queue.pop(0)
+              sorted_modules.append(m)
+              for dep in graph[m]:
+                  indegree[dep] -= 1
+                  if indegree[dep] == 0:
+                      queue.append(dep)
+
+          # 有可能存在循环依赖或未被排序的模块，追加到末尾
+          sorted_set = set(sorted_modules)
+          for m in all_modules:
+              if m not in sorted_set:
+                  sorted_modules.append(m)
+
+          # ---------- 编译 ----------
+          compiled_pcm = {}   # 模块全名 -> PCM 路径
+
+          def compile_module(mod_name):
+              if mod_name in compiled_pcm:
+                  return
+              src = module_sources[mod_name][0]  # 每个模块名对应一个文件（分区）或主模块文件
+              pcm_path = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
+              obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
+
+              extra = []
+              # 传递所有已编译模块的 PCM
+              for name, path in compiled_pcm.items():
+                  extra.append(f"-fmodule-file={name}={path}")
+
+              # 生成 PCM
+              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra
+              print(f"PCM: {mod_name}")
+              subprocess.run(cmd_pcm, check=True)
+              compiled_pcm[mod_name] = pcm_path
+
+              # 生成对象文件
+              cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra
+              subprocess.run(cmd_obj, check=True)
+
+          # 按拓扑顺序编译所有模块
+          for mod in sorted_modules:
+              compile_module(mod)
+
+          # 编译剩下的普通源文件（没有 export module 的）
+          compiled_set = set()
+          for mod, files in module_sources.items():
+              compiled_set.update(files)
+          for fpath in cc_files:
+              if fpath not in compiled_set:
+                  obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(fpath, SRC_ROOT).replace('/', '_')}.o")
+                  subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj_path], check=True)
+
+          # 链接所有 .o 文件
+          objs = glob.glob(os.path.join(OBJ_DIR, "*.o"))
+          link_cmd = [CLANGXX] + BASE_FLAGS.split() + objs + [
+              "-shared", "-o", os.path.join(BUILD_DIR, "backend_napi_v8.node"),
+              f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
+              "-luv", "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES"
+          ]
+          print("链接中...")
+          subprocess.run(link_cmd, check=True)
+          print("构建完成！")
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v6
+        with:
+          name: isolated-vm-android-${{ matrix.abi }}
+          path: build/backend_napi_v8.node
+          if-no-files-found: error
