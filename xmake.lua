@@ -87,6 +87,7 @@ target("nodejs_v8")
     set_kind("static")
     add_deps("auto_js")
     add_files("packages/third_party/v8/v8.cc")
+    set_policy("build.c++.modules", false)   -- 该目标不参与模块编译
 
 target("napi_js")
     set_kind("static")
