@@ -8,7 +8,7 @@ on:
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
   NODE_HEADERS: 24.15.0
-  ANDROID_NDK_VERSION: r29
+  ANDROID_NDK_VERSION: r30
   ANDROID_NDK_HOME: /tmp/android-ndk
 
 jobs:
