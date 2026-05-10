@@ -91,24 +91,12 @@ jobs:
           DOWNLOAD_URL: ${{ matrix.download_url }}
           JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
 
-      - name: 下载并复制完整 Node.js 源码
+      - name: 下载 Node.js 头文件（不复制到项目）
         run: |
-          mkdir -p deps/nodejs
           curl -fsSL "https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz" | tar -xz -C /tmp
-          cp -r "/tmp/node-v${{ env.NODE_HEADERS }}" "deps/nodejs/${{ env.NODE_HEADERS }}"
-          mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/"
-          mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r "/tmp/node-v${{ env.NODE_HEADERS }}"/* "packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/"
-
-      - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
-        run: |
-          mkdir -p deps/nodejs/${{ env.NODE_HEADERS }}/include/node
-          mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node
-          mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node
-          touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
-          touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
-          touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+          # 验证关键头文件存在
+          test -f /tmp/node-v${{ env.NODE_HEADERS }}/src/node_api.h
+          test -f /tmp/node-v${{ env.NODE_HEADERS }}/deps/v8/include/v8.h
 
       - name: 下载并配置 Android NDK (r29)
         run: |
