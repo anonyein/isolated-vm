@@ -114,7 +114,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      - name: 配置 CMake
+      - name: 配置 CMake（仅用于生成环境，不实际构建）
         shell: bash
         run: |
           mkdir -p fake-boost/lib/cmake/Boost
@@ -140,7 +140,6 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # CMake 配置仅用于生成必要的环境，实际编译由 Python 脚本接管
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -167,7 +166,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全缺失的分区导入、修正语法错误，timer.cc 占位）
+      - name: 修复源码（补全分区导入、修正 GCC 语法、timer.cc 占位）
         shell: bash
         run: |
           echo "修复源码..."
@@ -272,7 +271,7 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 手动编译所有模块（拓扑排序 + PCM 传递）并链接
+      - name: 手动编译所有模块（精确依赖递归编译）并链接
         shell: python3 {0}
         run: |
           import os, subprocess, re, glob, collections
@@ -299,7 +298,6 @@ jobs:
           OBJ_DIR = os.path.join(BUILD_DIR, "objs")
           os.makedirs(OBJ_DIR, exist_ok=True)
 
-          # 收集所有源文件
           cc_files = []
           for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
               dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark")]
@@ -307,10 +305,9 @@ jobs:
                   if f.endswith(".cc"):
                       cc_files.append(os.path.join(root, f))
 
-          # 提取模块信息
           module_sources = collections.defaultdict(list)
+          imports_map = collections.defaultdict(list)
           edges = []
-          defined = set()
           export_imports = collections.defaultdict(list)
 
           for fpath in cc_files:
@@ -319,84 +316,64 @@ jobs:
               mods = re.findall(r'export module ([\w:.]+)', cont)
               if mods:
                   mod = mods[0]
-                  defined.add(mod)
                   module_sources[mod].append(fpath)
                   for imp in re.findall(r'import ([\w:.]+)', cont):
                       if imp.startswith(":"):
-                          edges.append((fpath, mod, mod + imp))
+                          full_name = mod + imp
                       else:
-                          edges.append((fpath, mod, imp))
+                          full_name = imp
+                      imports_map[mod].append(full_name)
+                      edges.append((fpath, mod, full_name))
                   for eimp in re.findall(r'export import ([\w:.]+)', cont):
                       if eimp.startswith(":"):
-                          full = mod + eimp
-                          export_imports[mod].append(full)
-                          edges.append((fpath, mod, full))
+                          full_name = mod + eimp
+                          export_imports[mod].append(full_name)
+                          edges.append((fpath, mod, full_name))
 
-          # 依赖图
           all_mods = set(module_sources.keys())
-          graph = collections.defaultdict(list)
-          indegree = collections.defaultdict(int)
-          for m in all_mods:
-              indegree[m] = indegree.get(m, 0)
-          for _, mod, dep in edges:
-              if dep in all_mods and dep != mod:
-                  graph[dep].append(mod)
-                  indegree[mod] += 1
 
-          # 拓扑排序
-          queue = [m for m in all_mods if indegree[m] == 0]
-          sorted_mods = []
-          while queue:
-              m = queue.pop(0)
-              sorted_mods.append(m)
-              for nxt in graph[m]:
-                  indegree[nxt] -= 1
-                  if indegree[nxt] == 0:
-                      queue.append(nxt)
-          for m in all_mods:
-              if m not in sorted_mods:
-                  sorted_mods.append(m)
-
-          # 编译函数
-          compiled = {}
-          def compile_one(mod_name):
-              if mod_name in compiled:
+          compiled_pcm = {}
+          def compile_module(mod_name):
+              if mod_name in compiled_pcm:
                   return
+              for dep in imports_map.get(mod_name, []):
+                  if dep in all_mods:
+                      compile_module(dep)
+              if ':' not in mod_name and mod_name in export_imports:
+                  for part in export_imports[mod_name]:
+                      if part in all_mods:
+                          compile_module(part)
+
               src = module_sources[mod_name][0]
-              pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
-              obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
-              extra = [f"-fmodule-file={n}={p}" for n, p in compiled.items()]
-              if ':' in mod_name:
-                  main = mod_name.split(':')[0]
-                  if main in compiled:
-                      extra.append(f"-fmodule-file={main}={compiled[main]}")
-              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra, check=True)
-              compiled[mod_name] = pcm
-              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra, check=True)
+              pcm_path = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
+              obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
 
-          for m in sorted_mods:
-              if ':' not in m and m in export_imports:
-                  for e in export_imports[m]:
-                      if e not in compiled and e in all_mods:
-                          compile_one(e)
-              compile_one(m)
+              extra = []
+              for dep in imports_map.get(mod_name, []):
+                  if dep in compiled_pcm:
+                      extra.append(f"-fmodule-file={dep}={compiled_pcm[dep]}")
 
-          for m in all_mods:
-              if m not in compiled:
-                  compile_one(m)
+              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra
+              print(f"PCM: {mod_name}")
+              subprocess.run(cmd_pcm, check=True)
+              compiled_pcm[mod_name] = pcm_path
 
-          # 编译无模块的普通文件
-          mod_files = set()
-          for fl in module_sources.values():
-              mod_files.update(fl)
-          for f in cc_files:
-              if f not in mod_files:
-                  obj = os.path.join(OBJ_DIR, f"{os.path.relpath(f, SRC_ROOT).replace('/', '_')}.o")
-                  subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", f, "-o", obj], check=True)
+              cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra
+              subprocess.run(cmd_obj, check=True)
 
-          # 收集所有 .o 文件
+          for mod in all_mods:
+              compile_module(mod)
+
+          compiled_sources = set()
+          for files in module_sources.values():
+              compiled_sources.update(files)
+          for fpath in cc_files:
+              if fpath not in compiled_sources:
+                  obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(fpath, SRC_ROOT).replace('/', '_')}.o")
+                  print(f"OBJ: {os.path.relpath(fpath, SRC_ROOT)}")
+                  subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj_path], check=True)
+
           objs = glob.glob(os.path.join(OBJ_DIR, "*.o"))
-          # 链接
           out_node = os.path.join(BUILD_DIR, "backend_napi_v8.node")
           link_cmd = [CLANGXX] + BASE_FLAGS.split() + objs + [
               f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
