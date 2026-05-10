@@ -78,7 +78,7 @@ target("nodejs")
     set_kind("static")
     add_deps("auto_js")
     add_defines("NAPI_VERSION=10")
-    -- 只包含 nodejs 包自身的源文件，不递归进入 deps/nodejs 等目录
+    -- 只编译 nodejs 包自身的源文件，避免递归进入 deps
     add_files("packages/third_party/nodejs/js_native_api.cc")
     add_files("packages/third_party/nodejs/js_native_api_types.cc")
     add_files("packages/third_party/nodejs/node_api.cc")
@@ -88,8 +88,8 @@ target("nodejs")
 target("nodejs_v8")
     set_kind("static")
     add_deps("auto_js")
-    add_files("packages/third_party/v8/**.cc")
-    exclude_extra()
+    -- 只编译 v8 导出层自身的文件
+    add_files("packages/third_party/v8/v8.cc")
 
 target("napi_js")
     set_kind("static")
