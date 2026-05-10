@@ -53,15 +53,13 @@ end
 target("utility")
     set_kind("static")
     add_files("packages/utility/**.cc", {filter = filter_files})
-    -- 公开模块接口，保证所有依赖方都能使用 util
-    set_policy("build.c++.modules.public", true)
+    set_policy("build.c++.modules.export", true)   -- 导出模块接口
 
 target("auto_js")
     set_kind("static")
     add_deps("utility")
     add_files("packages/auto_js/js/**.cc", {filter = filter_files})
-    -- 公开 auto_js 模块接口给 isolated_vm 等
-    set_policy("build.c++.modules.public", true)
+    set_policy("build.c++.modules.export", true)
 
 target("nodejs")
     set_kind("static")
@@ -72,28 +70,26 @@ target("nodejs")
     add_files("packages/third_party/nodejs/node_api.cc")
     add_files("packages/third_party/nodejs/nodejs.cc")
     add_files("packages/third_party/nodejs/uv.cc")
+    set_policy("build.c++.modules.export", true)   -- 如果它导出模块
 
 target("nodejs_v8")
     set_kind("static")
     add_deps("auto_js")
     add_files("packages/third_party/v8/v8.cc")
-    -- 公开 v8 模块接口
-    set_policy("build.c++.modules.public", true)
+    set_policy("build.c++.modules.export", true)
 
 target("napi_js")
     set_kind("static")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8")
     add_files("packages/auto_js/napi/**.cc", {filter = filter_files})
     add_includedirs(path.join(workspace, "packages/auto_js/napi/include"), {public = true})
-    -- 公开 napi_js 模块接口
-    set_policy("build.c++.modules.public", true)
+    set_policy("build.c++.modules.export", true)
 
 target("v8_js")
     set_kind("static")
     add_deps("utility", "auto_js", "nodejs_v8")
     add_files("packages/auto_js/v8/**.cc", {filter = filter_files})
-    -- 公开 v8_js 模块接口
-    set_policy("build.c++.modules.public", true)
+    set_policy("build.c++.modules.export", true)
 
 target("isolated_vm")
     set_kind("static")
