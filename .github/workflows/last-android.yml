@@ -285,8 +285,10 @@ jobs:
             sed -i '2i\#include <thread>' packages/utility/platform/timer.cc
           fi
 
-          # 核心修复：timer.cc 线程构造，按值捕获 stop_token 改为捕获 this
-          sed -i 's/thread_{\[ & \](std::stop_token stop_token) -> void { loop(stop_token); }}/thread_{\[this\] { auto stop_token = get_token(); loop(stop_token); }}/' packages/utility/platform/timer.cc
+          # 核心修复：timer.cc 线程构造，按值捕获 stop_token 改为捕获 this 并使用 stop_source_ 获取 token
+          # 匹配模式：thread_{[ & ](std::stop_token stop_token) -> void { loop(stop_token); }} {}
+          # 替换为：thread_{[this] { loop(stop_source_.get_token()); }} {}
+          sed -i 's/thread_{\[ \& \](std::stop_token stop_token) -> void { loop(stop_token); }}/thread_{\[this\] { loop(stop_source_.get_token()); }}/' packages/utility/platform/timer.cc
 
       - name: 清理 ninja 中的不兼容标志
         run: |
