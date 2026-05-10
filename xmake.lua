@@ -12,7 +12,7 @@ add_defines("EXPORT_IS_EXPORT")
 -- 获取工作区根目录
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
--- ========== Node.js 头文件（按正确结构）==========
+-- ========== Node.js 头文件 ==========
 local nodejs_base = path.join(workspace, "packages/third_party/nodejs/deps/nodejs/24.15.0")
 add_includedirs(path.join(nodejs_base, "src"), {public = true})
 add_includedirs(path.join(nodejs_base, "deps/v8/include"), {public = true})
@@ -33,7 +33,6 @@ add_includedirs(os.getenv("ANDROID_NDK_HOME") .. "/toolchains/llvm/prebuilt/linu
 -- ========== 项目内部 include ==========
 add_includedirs(path.join(workspace, "packages/utility/include"))
 add_includedirs(path.join(workspace, "packages/auto_js/napi/include"))
--- 关键：包含自动生成头文件的目录
 add_includedirs(path.join(workspace, "packages/backend_napi_v8/runtime"))
 
 -- 强制通过编译标志传递
@@ -55,11 +54,12 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 排除 node_modules 和 test/tests 目录
+-- 排除 node_modules、test、deps 等无关目录
 function exclude_extra()
     remove_files("packages/*/node_modules/**")
     remove_files("packages/*/test/**")
     remove_files("packages/*/tests/**")
+    remove_files("packages/*/deps/**")   -- 排除第三方依赖源码
 end
 
 target("utility")
