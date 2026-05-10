@@ -187,10 +187,10 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全所有缺失的分区导入并修复特定文件）
+      - name: 修复源码（彻底清理 timer.cc 模块声明并补全分区导入）
         shell: bash
         run: |
-          echo "修复源码: 强制修正所有 module 文件并补全 import 语句..."
+          echo "修复源码..."
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
@@ -258,7 +258,7 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # regular_return.cc 和 bind.cc 需要 type_traits.transform
+          # 分区导入补全
           for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
             sed -i '/^import :type_traits\.transform;$/d' "$file"
             sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
@@ -271,11 +271,18 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 修复 timer.cc 的 std::jthread 问题
-          sed -i 's/std::jthread/std::thread/g' packages/utility/platform/timer.cc
+          # ********* 关键修复：彻底移除 timer.cc 的模块声明 *********
+          # 删除 module util; 行（可能带前导空格）
+          sed -i '/^module util;$/d' packages/utility/platform/timer.cc
+          # 删除之前插入的 module; 行
           sed -i '/^module;$/d' packages/utility/platform/timer.cc
+          # 删除可能存在的 #include <bits/stdc++.h> 重复行
           sed -i '/^#include <bits\/stdc++.h>$/d' packages/utility/platform/timer.cc
+          # 在第一行重新插入 #include <bits/stdc++.h>
           sed -i '1i\#include <bits/stdc++.h>' packages/utility/platform/timer.cc
+          # 替换 std::jthread 为 std::thread
+          sed -i 's/std::jthread/std::thread/g' packages/utility/platform/timer.cc
+          # 确保包含 <thread>
           if ! grep -q '^#include <thread>' packages/utility/platform/timer.cc; then
             sed -i '2i\#include <thread>' packages/utility/platform/timer.cc
           fi
@@ -286,7 +293,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（精确顺序 + 普通文件处理）
+      - name: 完整编译 utility 模块（timer.cc 作为普通文件）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -309,9 +316,9 @@ jobs:
 
           compiled = {}
 
-          def cc(rel, part=None):
+          def cc(rel, part=None, is_interface=False):
               src = os.path.join(UTIL_DIR, rel)
-              pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
+              pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part and is_interface else None
               obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
               extra = [f"-fmodule-file=util:{name}={path}" for name, path in compiled.items()]
               if pcm:
@@ -323,43 +330,45 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 精确编译顺序（除 timer.cc 外）
-          cc("type_traits/transform.cc", "type_traits.transform")
-          cc("type_traits/type_of.cc", "type_traits.type_of")
-          cc("functional/elide.cc", "functional.elide")
-          cc("functional/flat_tuple.cc", "functional.flat_tuple")
-          cc("memory/comparator.cc", "memory.comparator")
-          cc("memory/noinit_allocator.cc", "memory.noinit_allocator")
-          cc("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
-          cc("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
-          cc("container/tinker_queue.cc", "container.tinker_queue")
-          cc("utility/constant_wrapper.cc", "utility.constant_wrapper")
-          cc("utility/facade.cc", "utility.facade")
-          cc("utility/hash.cc", "utility.hash")
-          cc("utility/ranges.cc", "utility.ranges")
-          cc("platform/timer.h.cc", "platform.timer")
-          cc("type_traits/type_pack.cc", "type_traits.type_pack")
-          cc("type_traits/function_traits.cc", "type_traits.function_traits")
-          cc("utility/string.cc", "utility.string")
-          cc("type_traits/type_traits.cc", "type_traits")
-          cc("utility/covariant_value.cc", "utility.covariant_value")
-          cc("utility/utility.cc", "utility")
-          cc("memory/autorelease_pool.cc", "memory.autorelease_pool")
-          cc("memory/memory.cc", "memory")
-          cc("functional/function_ref.cc", "functional.function_ref")
-          cc("functional/function_constant.cc", "functional.function_constant")
-          cc("functional/regular_return.cc", "functional.regular_return")
-          cc("functional/bind.cc", "functional.bind")
-          cc("functional/functional.cc", "functional")
-          cc("platform/lockable.cc", "platform.lockable")
-          cc("platform/stop_token.cc", "platform.stop_token")
-          cc("container/sealed_map.cc", "container.sealed_map")
+          # 模块分区顺序
+          cc("type_traits/transform.cc", "type_traits.transform", True)
+          cc("type_traits/type_of.cc", "type_traits.type_of", True)
+          cc("functional/elide.cc", "functional.elide", True)
+          cc("functional/flat_tuple.cc", "functional.flat_tuple", True)
+          cc("memory/comparator.cc", "memory.comparator", True)
+          cc("memory/noinit_allocator.cc", "memory.noinit_allocator", True)
+          cc("container/mutable_priority_queue.cc", "container.mutable_priority_queue", True)
+          cc("container/segmented_priority_queue.cc", "container.segmented_priority_queue", True)
+          cc("container/tinker_queue.cc", "container.tinker_queue", True)
+          cc("utility/constant_wrapper.cc", "utility.constant_wrapper", True)
+          cc("utility/facade.cc", "utility.facade", True)
+          cc("utility/hash.cc", "utility.hash", True)
+          cc("utility/ranges.cc", "utility.ranges", True)
+          cc("platform/timer.h.cc", "platform.timer", True)
+          cc("type_traits/type_pack.cc", "type_traits.type_pack", True)
+          cc("type_traits/function_traits.cc", "type_traits.function_traits", True)
+          cc("utility/string.cc", "utility.string", True)
+          cc("type_traits/type_traits.cc", "type_traits", True)
+          cc("utility/covariant_value.cc", "utility.covariant_value", True)
+          cc("utility/utility.cc", "utility", True)
+          cc("memory/autorelease_pool.cc", "memory.autorelease_pool", True)
+          cc("memory/memory.cc", "memory", True)
+          cc("functional/function_ref.cc", "functional.function_ref", True)
+          cc("functional/function_constant.cc", "functional.function_constant", True)
+          cc("functional/regular_return.cc", "functional.regular_return", True)
+          cc("functional/bind.cc", "functional.bind", True)
+          cc("functional/functional.cc", "functional", True)
+          cc("platform/lockable.cc", "platform.lockable", True)
+          cc("platform/stop_token.cc", "platform.stop_token", True)
+          cc("container/sealed_map.cc", "container.sealed_map", True)
 
-          # 普通文件：timer.cc（不生成 PCM）
-          cc("platform/timer.cc")
+          # timer.cc 已彻底转为普通文件，不用 is_interface
+          cc("platform/timer.cc", None, False)
 
+          # 主模块
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
+          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
+                 os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
           for pname, ppath in compiled.items():
               cmd.append(f"-fmodule-file=util:{pname}={ppath}")
           print("主模块 PCM: util")
