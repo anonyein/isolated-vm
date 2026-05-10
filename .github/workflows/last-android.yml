@@ -114,61 +114,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      # CMake 仍然配置一次，但不用于构建
-      - name: 配置 CMake
-        shell: bash
-        run: |
-          mkdir -p fake-boost/lib/cmake/Boost
-          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
-          add_library(Boost::boost INTERFACE IMPORTED)
-          set_target_properties(Boost::boost PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
-          )
-          set(Boost_FOUND TRUE)
-          set(Boost_INCLUDE_DIRS /usr/include)
-          set(Boost_LIBRARIES "")
-          set(Boost_VERSION 1.83.0)
-          BOOST_EOF
-          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'BOOST_VER_EOF'
-          set(PACKAGE_VERSION 1.83.0)
-          set(PACKAGE_VERSION_COMPATIBLE TRUE)
-          BOOST_VER_EOF
-
-          mkdir -p "${PWD}/build/module_cache"
-
-          cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
-          include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
-          set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
-          set(ANDROID_STL c++_shared)
-          set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
-          NDK_EOF
-
-          AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
-          V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
-
-          cmake \
-            -S "${PWD}" \
-            -B "${PWD}/build" \
-            -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
-            -DCMAKE_TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake" \
-            -DANDROID_ABI="${{ matrix.abi }}" \
-            -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
-            -DANDROID_STL=c++_shared \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_MAKE_PROGRAM=ninja \
-            -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
-            -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
-            -DV8_LIBRARY_TYPE=shared \
-            -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
-            -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
-            -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
-            -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
-            -DIVM_INSTALL=copy \
-            -G Ninja
-
-      - name: 修复源码（补全所有缺失的分区导入、修正 GCC 扩展，替换 timer.cc 占位）
+      - name: 修复源码（分区导入、GCC 扩展、timer.cc 占位）
         shell: bash
         run: |
           echo "修复源码..."
@@ -256,7 +202,6 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 核心修复：将 timer.cc 替换为空实现
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -273,7 +218,7 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 手动编译并链接（绕过 Ninja）
+      - name: 增强型自动编译并链接
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -285,7 +230,6 @@ jobs:
           TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
           SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           NODE_VER = os.environ["NODE_HEADERS"]
-          NODE_DIR = f"/tmp/node-v{NODE_VER}"  # 解压后路径实际为 deps/nodejs/...
           JAVET_SO = f"deps/javet/{os.environ['JAVET_SO_NAME']}"
 
           BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
@@ -305,7 +249,7 @@ jobs:
           OBJ_DIR = os.path.join(SRC_ROOT, "build", "objs")
           os.makedirs(OBJ_DIR, exist_ok=True)
 
-          # 收集源文件（排除 node_modules, test, tests, deps, benchmark）
+          # 收集源文件
           cc_files = []
           for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
               dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark")]
@@ -313,36 +257,52 @@ jobs:
                   if f.endswith(".cc"):
                       cc_files.append(os.path.join(root, f))
 
-          # 提取模块信息
+          # 提取完整的模块信息
           module_sources = collections.defaultdict(list)
-          edges = []
+          # 存储每个模块的 export import 列表（聚合分区子分区）
+          aggregate_subs = collections.defaultdict(list)
+          imports_map = collections.defaultdict(list)
           all_modules = set()
 
           for fpath in cc_files:
               with open(fpath, "r", errors="ignore") as fh:
                   content = fh.read()
-              mods = re.findall(r'export module (\S+?);', content)
-              if mods:
-                  mod = mods[0]
+              exported = re.findall(r'export module (\S+?);', content)
+              if exported:
+                  mod = exported[0]
                   all_modules.add(mod)
                   module_sources[mod].append(fpath)
-                  imports = re.findall(r'import ([:\w\.]+?);', content)
-                  for imp in imports:
-                      if imp.startswith(":"):
-                          full = mod + imp
-                      else:
-                          full = imp
-                      edges.append((fpath, mod, full))
+                  # 普通 import
+                  imports = re.findall(r'import (\S+?);', content)
+                  imports_map[mod] = imports
+                  # export import 子分区
+                  exp_imports = re.findall(r'export import (\S+?);', content)
+                  for eimp in exp_imports:
+                      if eimp.startswith(":"):
+                          full = mod + eimp
+                          aggregate_subs[mod].append(full)
 
-          # 构建依赖图
+          # 构建完整的依赖图（包含分区依赖）
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
-          for m in all_modules:
-              indegree[m] = indegree.get(m, 0)
-          for _, mod, dep in edges:
-              if dep in all_modules and dep != mod:
-                  graph[dep].append(mod)
-                  indegree[mod] += 1
+          for mod, implist in imports_map.items():
+              indegree.setdefault(mod, 0)
+              for imp in implist:
+                  if imp.startswith(":"):
+                      dep = mod + imp
+                  else:
+                      dep = imp
+                  if dep in all_modules:
+                      graph[dep].append(mod)
+                      indegree[mod] += 1
+
+          # 聚合分区的子分区也应该先于聚合分区编译
+          for agg, subs in aggregate_subs.items():
+              indegree.setdefault(agg, 0)
+              for sub in subs:
+                  if sub in all_modules:
+                      graph[sub].append(agg)
+                      indegree[agg] += 1
 
           # 拓扑排序
           queue = [m for m in all_modules if indegree[m] == 0]
@@ -358,47 +318,52 @@ jobs:
               if m not in sorted_modules:
                   sorted_modules.append(m)
 
-          # 编译函数
-          compiled_pcm = {}
+          # 编译函数（传递聚合分区子模块 PCM）
+          compiled = {}
           def compile_module(mod_name):
-              if mod_name in compiled_pcm:
+              if mod_name in compiled:
                   return
               src = module_sources[mod_name][0]
-              pcm_path = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
-              obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
-
+              pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
+              obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
               extra = []
-              for dep in re.findall(r'import ([:\w\.]+?);', open(src).read()):
-                  if dep.startswith(":"):
-                      dep_full = mod_name + dep
+              # 传递直接依赖
+              for imp in imports_map.get(mod_name, []):
+                  if imp.startswith(":"):
+                      dep = mod_name + imp
                   else:
-                      dep_full = dep
-                  if dep_full in compiled_pcm:
-                      extra.append(f"-fmodule-file={dep_full}={compiled_pcm[dep_full]}")
-              # 分区需要主模块
+                      dep = imp
+                  if dep in compiled:
+                      extra.append(f"-fmodule-file={dep}={compiled[dep]}")
+                  # 若依赖是聚合分区，传递其所有子分区
+                  if dep in aggregate_subs:
+                      for sub in aggregate_subs[dep]:
+                          if sub in compiled:
+                              extra.append(f"-fmodule-file={sub}={compiled[sub]}")
+              # 如果是分区，传递主模块
               if ':' in mod_name:
                   main_mod = mod_name.split(':')[0]
-                  if main_mod in compiled_pcm:
-                      extra.append(f"-fmodule-file={main_mod}={compiled_pcm[main_mod]}")
-
-              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra
+                  if main_mod in compiled:
+                      extra.append(f"-fmodule-file={main_mod}={compiled[main_mod]}")
+              # 生成 PCM
+              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
               print(f"PCM: {mod_name}")
               subprocess.run(cmd_pcm, check=True)
-              compiled_pcm[mod_name] = pcm_path
-
-              cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra
+              compiled[mod_name] = pcm
+              # 生成对象文件
+              cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               subprocess.run(cmd_obj, check=True)
 
-          # 按顺序编译所有模块
+          # 按拓扑顺序编译所有模块
           for mod in sorted_modules:
               compile_module(mod)
 
-          # 编译普通源文件（无 export module）
-          handled_files = set()
-          for flist in module_sources.values():
-              handled_files.update(flist)
+          # 编译普通源文件
+          handled = set()
+          for fl in module_sources.values():
+              handled.update(fl)
           for fpath in cc_files:
-              if fpath not in handled_files:
+              if fpath not in handled:
                   obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(fpath, SRC_ROOT).replace('/', '_')}.o")
                   print(f"OBJ: {os.path.relpath(fpath, SRC_ROOT)}")
                   subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj_path], check=True)
