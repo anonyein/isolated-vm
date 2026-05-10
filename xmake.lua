@@ -54,31 +54,28 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 通用排除函数（用于需要递归添加文件的目标）
-function exclude_extra()
-    remove_files("packages/*/node_modules/**")
-    remove_files("packages/*/test/**")
-    remove_files("packages/*/tests/**")
-    remove_files("packages/*/deps/**")
-    remove_files("packages/*/benchmark/**")
+-- 自定义过滤器：排除无关目录
+local function filter_files(file)
+    return not (
+        file:find("node_modules")
+        or file:find("/test/") or file:find("/tests/")
+        or file:find("/deps/") or file:find("/benchmark/")
+    )
 end
 
 target("utility")
     set_kind("static")
-    add_files("packages/utility/**.cc")
-    exclude_extra()
+    add_files("packages/utility/**.cc", {filter = filter_files})
 
 target("auto_js")
     set_kind("static")
     add_deps("utility")
-    add_files("packages/auto_js/js/**.cc")
-    exclude_extra()
+    add_files("packages/auto_js/js/**.cc", {filter = filter_files})
 
 target("nodejs")
     set_kind("static")
     add_deps("auto_js")
     add_defines("NAPI_VERSION=10")
-    -- 只编译 nodejs 包自身的源文件，避免递归进入 deps
     add_files("packages/third_party/nodejs/js_native_api.cc")
     add_files("packages/third_party/nodejs/js_native_api_types.cc")
     add_files("packages/third_party/nodejs/node_api.cc")
@@ -88,34 +85,29 @@ target("nodejs")
 target("nodejs_v8")
     set_kind("static")
     add_deps("auto_js")
-    -- 只编译 v8 导出层自身的文件
     add_files("packages/third_party/v8/v8.cc")
 
 target("napi_js")
     set_kind("static")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8")
-    add_files("packages/auto_js/napi/**.cc")
-    exclude_extra()
+    add_files("packages/auto_js/napi/**.cc", {filter = filter_files})
     add_includedirs(path.join(workspace, "packages/auto_js/napi/include"), {public = true})
 
 target("v8_js")
     set_kind("static")
     add_deps("utility", "auto_js", "nodejs_v8")
-    add_files("packages/auto_js/v8/**.cc")
-    exclude_extra()
+    add_files("packages/auto_js/v8/**.cc", {filter = filter_files})
 
 target("isolated_vm")
     set_kind("static")
     add_deps("utility", "v8_js", "napi_js")
-    add_files("packages/isolated-vm/addon/**.cc")
-    add_files("packages/backend_napi_v8/api/**.cc")
-    exclude_extra()
+    add_files("packages/isolated-vm/addon/**.cc", {filter = filter_files})
+    add_files("packages/backend_napi_v8/api/**.cc", {filter = filter_files})
 
 target("backend_napi_v8")
     set_kind("shared")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8", "napi_js", "v8_js", "isolated_vm")
-    add_files("packages/backend_napi_v8/**.cc")
-    exclude_extra()
+    add_files("packages/backend_napi_v8/**.cc", {filter = filter_files})
     add_links("javet-node-android-i18n")
     if is_plat("android") then
         add_links("uv", "android", "log", "EGL", "GLESv2", "OpenSLES")
