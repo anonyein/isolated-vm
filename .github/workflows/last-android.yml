@@ -140,8 +140,7 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 重新启用模块扫描，让 CMake 自动处理模块依赖
-          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 scans" FORCE)
+          # CMake 配置仅用于生成必要的环境，实际编译由 Python 脚本接管
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -168,7 +167,7 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（补全所有缺失的分区导入、修正 GCC 扩展，并保留 timer.cc 占位）
+      - name: 修复源码（补全缺失的分区导入、修正语法错误，timer.cc 占位）
         shell: bash
         run: |
           echo "修复源码..."
@@ -256,7 +255,7 @@ jobs:
           sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
           sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 保留 timer.cc 占位实现，并添加完整的导入和空类定义
+          # timer.cc 占位
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -273,44 +272,144 @@ jobs:
           }
           TIMER_EOF
 
-          # 重要：恢复之前被清空的 isolated_vm 分区文件，保留原始内容
-          # 由于我们无法完全恢复原始代码，这里简单地恢复为原始的模块声明并添加空的实现体
-          for f in \
-            packages/backend_napi_v8/api/value/accept.cc \
-            packages/backend_napi_v8/api/value/value.cc \
-            packages/backend_napi_v8/api/value/primitive.cc; do
-            cat > "$f" << 'ISOLATED_EOF'
-          module;
-          #include <bits/stdc++.h>
-          export module isolated_vm:api.value;
-          import :api.support;
-
-          namespace isolated_vm {
-              // Placeholder - original content lost
-          }
-          ISOLATED_EOF
-          done
-
-      - name: 清理 ninja 中的不兼容标志并注入 Boost 头文件路径
+      - name: 手动编译所有模块（拓扑排序 + PCM 传递）并链接
+        shell: python3 {0}
         run: |
-          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ |& -isystem /tmp/host-boost-headers |g' {} \;
-          find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps |& -isystem /tmp/host-boost-headers |g' {} \;
+          import os, subprocess, re, glob, collections
 
-      - name: 构建最终目标
-        run: ninja -C build backend_napi_v8
+          SRC_ROOT = os.environ["GITHUB_WORKSPACE"]
+          BUILD_DIR = os.path.join(SRC_ROOT, "build")
+          NDK_HOME = "/tmp/android-ndk"
+          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
+          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"
 
-      - name: 验证产物
-        if: success()
-        run: |
-          ls -lh build/packages/backend_napi_v8/
-          file build/packages/backend_napi_v8/backend_napi_v8.node
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
+                       f"-isystem /tmp/host-boost-headers " \
+                       f"-isystem {SRC_ROOT}/packages/utility/include " \
+                       f"-isystem {NODE_DIR}/src " \
+                       f"-isystem {NODE_DIR}/deps/v8/include " \
+                       f"-isystem {NODE_DIR}/deps/uv/include " \
+                       f"-isystem {NODE_DIR}/include/node " \
+                       f"-isystem {SRC_ROOT}/packages/auto_js/napi/include " \
+                       f"-isystem {SRC_ROOT}/packages/backend_napi_v8/runtime " \
+                       f"-DEXPORT_IS_EXPORT -DNAPI_VERSION=10 -O3 -DNDEBUG"
 
-      - uses: actions/upload-artifact@v6
-        if: success()
+          OBJ_DIR = os.path.join(BUILD_DIR, "objs")
+          os.makedirs(OBJ_DIR, exist_ok=True)
+
+          # 收集所有源文件
+          cc_files = []
+          for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
+              dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark")]
+              for f in files:
+                  if f.endswith(".cc"):
+                      cc_files.append(os.path.join(root, f))
+
+          # 提取模块信息
+          module_sources = collections.defaultdict(list)
+          edges = []
+          defined = set()
+          export_imports = collections.defaultdict(list)
+
+          for fpath in cc_files:
+              with open(fpath, "r", errors="ignore") as fh:
+                  cont = fh.read()
+              mods = re.findall(r'export module ([\w:.]+)', cont)
+              if mods:
+                  mod = mods[0]
+                  defined.add(mod)
+                  module_sources[mod].append(fpath)
+                  for imp in re.findall(r'import ([\w:.]+)', cont):
+                      if imp.startswith(":"):
+                          edges.append((fpath, mod, mod + imp))
+                      else:
+                          edges.append((fpath, mod, imp))
+                  for eimp in re.findall(r'export import ([\w:.]+)', cont):
+                      if eimp.startswith(":"):
+                          full = mod + eimp
+                          export_imports[mod].append(full)
+                          edges.append((fpath, mod, full))
+
+          # 依赖图
+          all_mods = set(module_sources.keys())
+          graph = collections.defaultdict(list)
+          indegree = collections.defaultdict(int)
+          for m in all_mods:
+              indegree[m] = indegree.get(m, 0)
+          for _, mod, dep in edges:
+              if dep in all_mods and dep != mod:
+                  graph[dep].append(mod)
+                  indegree[mod] += 1
+
+          # 拓扑排序
+          queue = [m for m in all_mods if indegree[m] == 0]
+          sorted_mods = []
+          while queue:
+              m = queue.pop(0)
+              sorted_mods.append(m)
+              for nxt in graph[m]:
+                  indegree[nxt] -= 1
+                  if indegree[nxt] == 0:
+                      queue.append(nxt)
+          for m in all_mods:
+              if m not in sorted_mods:
+                  sorted_mods.append(m)
+
+          # 编译函数
+          compiled = {}
+          def compile_one(mod_name):
+              if mod_name in compiled:
+                  return
+              src = module_sources[mod_name][0]
+              pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
+              obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
+              extra = [f"-fmodule-file={n}={p}" for n, p in compiled.items()]
+              if ':' in mod_name:
+                  main = mod_name.split(':')[0]
+                  if main in compiled:
+                      extra.append(f"-fmodule-file={main}={compiled[main]}")
+              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra, check=True)
+              compiled[mod_name] = pcm
+              subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra, check=True)
+
+          for m in sorted_mods:
+              if ':' not in m and m in export_imports:
+                  for e in export_imports[m]:
+                      if e not in compiled and e in all_mods:
+                          compile_one(e)
+              compile_one(m)
+
+          for m in all_mods:
+              if m not in compiled:
+                  compile_one(m)
+
+          # 编译无模块的普通文件
+          mod_files = set()
+          for fl in module_sources.values():
+              mod_files.update(fl)
+          for f in cc_files:
+              if f not in mod_files:
+                  obj = os.path.join(OBJ_DIR, f"{os.path.relpath(f, SRC_ROOT).replace('/', '_')}.o")
+                  subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", f, "-o", obj], check=True)
+
+          # 收集所有 .o 文件
+          objs = glob.glob(os.path.join(OBJ_DIR, "*.o"))
+          # 链接
+          out_node = os.path.join(BUILD_DIR, "backend_napi_v8.node")
+          link_cmd = [CLANGXX] + BASE_FLAGS.split() + objs + [
+              f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
+              "-shared", "-luv", "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES",
+              "-o", out_node
+          ]
+          print("链接中...")
+          subprocess.run(link_cmd, check=True)
+          print(f"构建完成！产物：{out_node}")
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v6
         with:
           name: isolated-vm-android-${{ matrix.abi }}
-          path: build/packages/backend_napi_v8/artifacts
+          path: build/backend_napi_v8.node
           if-no-files-found: error
