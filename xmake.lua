@@ -96,5 +96,3 @@ target("backend_napi_v8")
         add_links("uv", "android", "log", "EGL", "GLESv2", "OpenSLES")
     end
     set_filename("backend_napi_v8.node")
-    -- 强制绕过模块依赖检查
-    add_cxxflags("-fno-modules-prune", {force = true})
