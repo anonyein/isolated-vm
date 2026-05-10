@@ -1,18 +1,15 @@
--- xmake.lua
+-- xmake.lua (fixed)
 set_project("isolated-vm")
 set_version("0.0.1")
 add_rules("mode.release")
 
--- 全局启用 C++20 模块支持，并强制公开所有模块接口
 set_policy("build.c++.modules", true)
-set_policy("build.c++.modules.public", true)
 
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
--- Node.js 头文件（/tmp 直接引用）
 local node_ver = os.getenv("NODE_HEADERS") or "24.15.0"
 local node_dir = path.join("/tmp", "node-v" .. node_ver)
 
@@ -46,7 +43,6 @@ end
 
 add_cxxflags("-fvisibility=hidden", "-fPIC")
 
--- 过滤器
 local function filter_files(file)
     if file:find("node_modules") or file:find("/deps/") or file:find("/test/") or file:find("/tests/") or file:find("/benchmark/") then
         return false
@@ -57,8 +53,6 @@ end
 target("utility")
     set_kind("static")
     add_files("packages/utility/**.cc", {filter = filter_files})
-    -- 公开模块接口，保证依赖方能够找到 util 的模块映射
-    set_policy("build.c++.modules.public", true)
 
 target("auto_js")
     set_kind("static")
@@ -93,8 +87,8 @@ target("v8_js")
 
 target("isolated_vm")
     set_kind("static")
-    -- 显式依赖 utility，并保证能访问 util 模块接口
-    add_deps("utility", "v8_js", "napi_js")
+    -- 必须直接依赖 nodejs_v8 以获取 v8 模块接口
+    add_deps("utility", "v8_js", "napi_js", "nodejs_v8")
     add_files("packages/isolated-vm/addon/**.cc", {filter = filter_files})
     add_files("packages/backend_napi_v8/api/**.cc", {filter = filter_files})
 
