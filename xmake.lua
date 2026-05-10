@@ -6,7 +6,7 @@ add_rules("mode.release")
 set_policy("build.c++.modules", true)
 set_policy("build.c++.modules.clang.fallbackscanner", true)
 set_policy("build.c++.modules.culling", false)
-set_policy("build.c++.modules.hide_dependencies", false) -- 不隐藏依赖
+set_policy("build.c++.modules.hide_dependencies", true)   -- 隐藏依赖以避免扫描 node_modules
 
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
@@ -30,6 +30,8 @@ add_cxxflags("-I" .. path.join(node_dir, "deps/v8/include"))
 add_cxxflags("-I" .. path.join(node_dir, "deps/uv/include"))
 add_cxxflags("-I" .. path.join(node_dir, "include/node"))
 add_cxxflags("-I" .. path.join(workspace, "packages/backend_napi_v8/runtime"))
+-- 强制传递 C++26 标准，避免扫描时缺少
+add_cxxflags("-std=gnu++26", {force = true})
 
 add_linkdirs("deps/javet")
 
@@ -85,7 +87,6 @@ target("v8_js")
     add_deps("utility", "auto_js", "nodejs_v8")
     add_files("packages/auto_js/v8/**.cc", {filter = filter_files})
 
--- 合并 isolated_vm 和 backend_napi_v8，消除跨目标模块依赖
 target("backend_napi_v8")
     set_kind("shared")
     add_deps("utility", "auto_js", "nodejs", "nodejs_v8", "napi_js", "v8_js")
