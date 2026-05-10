@@ -284,7 +284,7 @@ jobs:
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
 
-      - name: 完整编译 utility 模块（显式依赖传递）
+      - name: 完整编译 utility 模块（正确顺序：meta.algorithm 早于 utility.variant）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -325,7 +325,7 @@ jobs:
               print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
               subprocess.run(cmd, check=True)
 
-          # 模块接口分区
+          # 模块接口分区（按依赖顺序）
           cc("type_traits/transform.cc", "type_traits.transform", True)
           cc("type_traits/type_of.cc", "type_traits.type_of", True)
           cc("functional/elide.cc", "functional.elide", True)
@@ -356,9 +356,10 @@ jobs:
           cc("platform/lockable.cc", "platform.lockable", True)
           cc("platform/stop_token.cc", "platform.stop_token", True)
           cc("container/sealed_map.cc", "container.sealed_map", True)
-          cc("utility/variant.cc", "utility.variant", True)
-          # meta.algorithm 需要显式依赖 type_traits.type_pack 和 utility
+          # meta.algorithm 必须在 utility.variant 之前
           cc("meta/algorithm.cc", "meta.algorithm", True, deps=["type_traits.type_pack", "utility"])
+          # utility.variant 依赖 meta.algorithm
+          cc("utility/variant.cc", "utility.variant", True, deps=["meta.algorithm"])
 
           main_pcm = os.path.join(PCM_DIR, "util.pcm")
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface",
