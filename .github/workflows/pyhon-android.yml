@@ -104,11 +104,66 @@ jobs:
         run: |
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
+          # 创建完整的 bits/stdc++.h
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
-          # ... (bits/stdc++.h 内容，与之前相同，此处省略以节省篇幅) ...
+          #include <cstdlib>
+          #include <cstdint>
+          #include <cstddef>
+          #include <cstring>
+          #include <cwchar>
+          #include <cstdio>
+          #include <cassert>
+          #include <algorithm>
+          #include <array>
+          #include <chrono>
+          #include <concepts>
+          #include <condition_variable>
+          #include <deque>
+          #include <exception>
+          #include <forward_list>
+          #include <functional>
+          #include <initializer_list>
+          #include <iomanip>
+          #include <iostream>
+          #include <iterator>
+          #include <limits>
+          #include <list>
+          #include <map>
+          #include <memory>
+          #include <mutex>
+          #include <new>
+          #include <numeric>
+          #include <optional>
+          #include <queue>
+          #include <random>
+          #include <ratio>
+          #include <set>
+          #include <shared_mutex>
+          #include <span>
+          #include <sstream>
+          #include <stack>
+          #include <stdexcept>
+          #include <stop_token>
+          #include <string>
+          #include <string_view>
+          #include <source_location>
+          #include <tuple>
+          #include <type_traits>
+          #include <unordered_map>
+          #include <unordered_set>
+          #include <utility>
+          #include <variant>
+          #include <vector>
+          #include <cmath>
+          #include <compare>
+          #include <ranges>
+          #include <bit>
+          #include <version>
           STD_HEADER
 
+          # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+          # 处理所有包含 'module ' 的文件（添加 module; 和 #include）
           for f in $(grep -rlP '(?:export\s+)?module\s' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
@@ -117,10 +172,12 @@ jobs:
               sed -i '2i\#include <bits/stdc++.h>' "$f"
             fi
           done
+          # 非模块文件插入 #include
           for f in $(find packages -name '*.cc' -exec grep -LP '(?:export\s+)?module\s' {} \;); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
+          # 修复 elide.cc
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
 
@@ -145,7 +202,7 @@ jobs:
             fi
           fi
 
-      - name: 删除所有软链接（防止模块扫描误入 node_modules）
+      - name: 删除软链接（避免干扰）
         run: find . -type l -delete
 
       - name: 自动拓扑排序并编译整个项目
@@ -175,73 +232,45 @@ jobs:
           OBJ_DIR = os.path.join(BUILD_DIR, "objs")
           os.makedirs(OBJ_DIR, exist_ok=True)
 
-          # ---------- 扫描所有源文件 ----------
+          # ---------- 扫描源文件 ----------
           cc_files = []
           for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
-              # 排除无关目录
               dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark")]
               for f in files:
                   if f.endswith(".cc"):
                       cc_files.append(os.path.join(root, f))
 
           # ---------- 提取模块信息 ----------
-          # 模块名 -> 文件路径
-          module_sources = collections.defaultdict(list)
-          # (文件, 模块全名) 的依赖列表
-          edges = []
-          # 所有定义的模块（全名）
+          module_sources = collections.defaultdict(list)   # 模块全名 -> [源文件路径]
+          edges = []                                        # (src, current_module, imported_module_name)
           defined_modules = set()
 
-          # 用于推测模块名的映射：根据文件路径前缀
-          # 我们可以从源码中的 export module 获取确切名称，无需硬编码
           for fpath in cc_files:
               with open(fpath, "r", errors="ignore") as f:
                   content = f.read()
-              # 提取本文件导出的模块
               exported = re.findall(r'export module (\S+?);', content)
               if exported:
                   mod = exported[0]
                   defined_modules.add(mod)
                   module_sources[mod].append(fpath)
-                  # 提取导入
                   imports = re.findall(r'import (\S+?);', content)
                   for imp in imports:
-                      # 处理 import :xxx 的情况（分区导入，需要扩展为完整模块名:分区）
                       if imp.startswith(":"):
-                          # 同模块分区，需要知道当前模块名
-                          # 从 export module 中我们已经得到了模块名，但此时还未建立完全的模块名映射
-                          # 简单处理：直接记录依赖，后续解析时根据模块名补全
-                          edges.append((fpath, mod, imp))
+                          edges.append((fpath, mod, f"{mod}{imp}"))
                       else:
                           edges.append((fpath, mod, imp))
-              else:
-                  # 可能不是模块接口文件，但可能包含模块实现（如 module; 开头）
-                  # 忽略，之后作为普通文件编译
-                  pass
 
-          # 建立完整的模块依赖图
-          # key: 模块全名, value: list of (依赖模块全名)
+          # 构建依赖图
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
           all_modules = set(module_sources.keys())
-
-          # 处理 import 语句，解析出依赖的真正模块名
-          for src_file, mod, imp in edges:
-              if imp.startswith(":"):
-                  # 分区导入，例如 :type_traits.transform
-                  dep = f"{mod}{imp}"  # 变成 util:type_traits.transform
-              else:
-                  dep = imp
-              if dep not in all_modules:
-                  # 可能是外部模块（如 import std; 已被删除），忽略
-                  continue
-              graph[dep].append(mod)
-              indegree[mod] = indegree.get(mod, 0) + 1
-
-          # 确保所有模块都有 indegree 记录
           for m in all_modules:
-              if m not in indegree:
-                  indegree[m] = 0
+              indegree[m] = indegree.get(m, 0)
+
+          for src, mod, dep in edges:
+              if dep in all_modules and dep != mod:   # 避免自环
+                  graph[dep].append(mod)
+                  indegree[mod] += 1
 
           # 拓扑排序
           queue = [m for m in all_modules if indegree[m] == 0]
@@ -249,15 +278,13 @@ jobs:
           while queue:
               m = queue.pop(0)
               sorted_modules.append(m)
-              for dep in graph[m]:
-                  indegree[dep] -= 1
-                  if indegree[dep] == 0:
-                      queue.append(dep)
-
-          # 有可能存在循环依赖或未被排序的模块，追加到末尾
-          sorted_set = set(sorted_modules)
+              for nxt in graph[m]:
+                  indegree[nxt] -= 1
+                  if indegree[nxt] == 0:
+                      queue.append(nxt)
+          # 追加可能未排序的模块（如循环依赖，但这种情况极少）
           for m in all_modules:
-              if m not in sorted_set:
+              if m not in sorted_modules:
                   sorted_modules.append(m)
 
           # ---------- 编译 ----------
@@ -266,14 +293,12 @@ jobs:
           def compile_module(mod_name):
               if mod_name in compiled_pcm:
                   return
-              src = module_sources[mod_name][0]  # 每个模块名对应一个文件（分区）或主模块文件
+              src = module_sources[mod_name][0]
               pcm_path = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
               obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
 
-              extra = []
-              # 传递所有已编译模块的 PCM
-              for name, path in compiled_pcm.items():
-                  extra.append(f"-fmodule-file={name}={path}")
+              # 传递所有已生成的 PCM
+              extra = [f"-fmodule-file={name}={path}" for name, path in compiled_pcm.items()]
 
               # 生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra
@@ -289,23 +314,24 @@ jobs:
           for mod in sorted_modules:
               compile_module(mod)
 
-          # 编译剩下的普通源文件（没有 export module 的）
-          compiled_set = set()
-          for mod, files in module_sources.items():
-              compiled_set.update(files)
+          # 编译剩余的普通源文件
+          module_file_set = set()
+          for files in module_sources.values():
+              module_file_set.update(files)
           for fpath in cc_files:
-              if fpath not in compiled_set:
+              if fpath not in module_file_set:
                   obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(fpath, SRC_ROOT).replace('/', '_')}.o")
+                  print(f"OBJ: {os.path.relpath(fpath, SRC_ROOT)}")
                   subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj_path], check=True)
 
-          # 链接所有 .o 文件
+          # 链接
           objs = glob.glob(os.path.join(OBJ_DIR, "*.o"))
           link_cmd = [CLANGXX] + BASE_FLAGS.split() + objs + [
               "-shared", "-o", os.path.join(BUILD_DIR, "backend_napi_v8.node"),
               f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
               "-luv", "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES"
           ]
-          print("链接中...")
+          print("正在链接...")
           subprocess.run(link_cmd, check=True)
           print("构建完成！")
 
