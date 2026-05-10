@@ -208,7 +208,7 @@ jobs:
       - name: 自动拓扑排序并编译整个项目
         shell: python3 {0}
         run: |
-          import os, subprocess, re, glob, collections, sys
+          import os, subprocess, re, glob, collections
 
           SRC_ROOT = os.environ["GITHUB_WORKSPACE"]
           BUILD_DIR = os.path.join(SRC_ROOT, "build")
@@ -256,11 +256,12 @@ jobs:
                   imports = re.findall(r'import (\S+?);', content)
                   for imp in imports:
                       if imp.startswith(":"):
+                          # 同模块分区导入，完整名称当前模块:分区
                           edges.append((fpath, mod, f"{mod}{imp}"))
                       else:
                           edges.append((fpath, mod, imp))
 
-          # 构建依赖图
+          # 构建依赖图（针对模块全名）
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
           all_modules = set(module_sources.keys())
@@ -268,7 +269,7 @@ jobs:
               indegree[m] = indegree.get(m, 0)
 
           for src, mod, dep in edges:
-              if dep in all_modules and dep != mod:   # 避免自环
+              if dep in all_modules and dep != mod:
                   graph[dep].append(mod)
                   indegree[mod] += 1
 
@@ -282,7 +283,7 @@ jobs:
                   indegree[nxt] -= 1
                   if indegree[nxt] == 0:
                       queue.append(nxt)
-          # 追加可能未排序的模块（如循环依赖，但这种情况极少）
+          # 追加可能未排序的模块
           for m in all_modules:
               if m not in sorted_modules:
                   sorted_modules.append(m)
@@ -293,12 +294,26 @@ jobs:
           def compile_module(mod_name):
               if mod_name in compiled_pcm:
                   return
+              # 先编译所有直接依赖
+              for dep in graph.get(mod_name, []):
+                  if dep in all_modules and dep not in compiled_pcm:
+                      compile_module(dep)
+
               src = module_sources[mod_name][0]
               pcm_path = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
               obj_path = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
 
-              # 传递所有已生成的 PCM
+              # 收集所有需要传递的 PCM
               extra = [f"-fmodule-file={name}={path}" for name, path in compiled_pcm.items()]
+
+              # 如果当前模块是分区（包含冒号），还需要传递主模块的 PCM
+              if ':' in mod_name:
+                  main_module = mod_name.split(':')[0]
+                  if main_module in compiled_pcm:
+                      # 确保主模块 PCM 被传递（可能已经在上面的循环中包含了，但明确再加一次）
+                      flag = f"-fmodule-file={main_module}={compiled_pcm[main_module]}"
+                      if flag not in extra:
+                          extra.append(flag)
 
               # 生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm_path] + extra
@@ -310,11 +325,11 @@ jobs:
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj_path] + extra
               subprocess.run(cmd_obj, check=True)
 
-          # 按拓扑顺序编译所有模块
+          # 按拓扑顺序编译
           for mod in sorted_modules:
               compile_module(mod)
 
-          # 编译剩余的普通源文件
+          # 编译剩余普通文件
           module_file_set = set()
           for files in module_sources.values():
               module_file_set.update(files)
