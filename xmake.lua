@@ -8,6 +8,9 @@ set_policy("build.c++.modules", true)
 set_languages("gnu++26")
 add_defines("EXPORT_IS_EXPORT")
 
+set_policy("build.c++.modules.fallbackscanner", true)
+set_policy("build.c++.modules.clang.fallbackscanner", true)
+
 local workspace = os.getenv("GITHUB_WORKSPACE") or os.projectdir()
 
 local node_ver = os.getenv("NODE_HEADERS") or "24.15.0"
