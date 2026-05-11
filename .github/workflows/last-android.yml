@@ -1,4 +1,4 @@
-name: Build Android (Hybrid)
+name: Build Android (Hybrid Fixed)
 
 on:
   workflow_dispatch:
@@ -100,7 +100,7 @@ jobs:
           touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
           touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
 
-      - name: 修复源码（bits/stdc++.h、模块结构、语法修复、timer.cc 占位）
+      - name: 修复源码（bits/stdc++.h、模块结构、语法修复、timer.cc 占位、补全缺失分区导入）
         shell: bash
         run: |
           echo "修复源码..."
@@ -198,6 +198,10 @@ jobs:
           }
           TIMER_EOF
 
+          # 补全 regular_return.cc 和 bind.cc 缺失的分区导入
+          sed -i '/^export module util:functional\.regular_return;$/a\import :type_traits.transform;' packages/utility/functional/regular_return.cc
+          sed -i '/^export module util:functional\.bind;$/a\import :type_traits.transform;' packages/utility/functional/bind.cc
+
       - name: 混合编译（硬编码 utility + 自动扫描其余模块）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
@@ -229,15 +233,14 @@ jobs:
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
 
-          def cc_util(rel, part=None, deps=None):
+          def cc_util(rel, part=None, deps=[]):
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(OBJ_DIR, f"util-{part}.pcm") if part else None
-              obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}.o")
+              obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}")
               extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
-              if deps:
-                  for d in deps:
-                      if d in compiled:
-                          extra.append(f"-fmodule-file={d}={compiled[d]}")
+              for d in deps:
+                  if d in compiled:
+                      extra.append(f"-fmodule-file={d}={compiled[d]}")
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: util:{part}")
@@ -264,49 +267,29 @@ jobs:
           cc_util("type_traits/type_pack.cc", "type_traits.type_pack")
           cc_util("type_traits/function_traits.cc", "type_traits.function_traits")
           cc_util("utility/string.cc", "utility.string")
-          # type_traits 聚合分区需要依赖其所有子分区
-          cc_util("type_traits/type_traits.cc", "type_traits", deps=[
-              "util:type_traits.type_pack", "util:type_traits.function_traits",
-              "util:type_traits.type_of", "util:type_traits.transform"
-          ])
+          cc_util("type_traits/type_traits.cc", "type_traits", deps=[f"util:{d}" for d in ["type_traits.type_pack","type_traits.function_traits","type_traits.type_of","type_traits.transform"]])
           cc_util("utility/covariant_value.cc", "utility.covariant_value")
-          # utility 聚合分区
-          cc_util("utility/utility.cc", "utility", deps=[
-              "util:utility.covariant_value", "util:utility.facade",
-              "util:utility.hash", "util:utility.ranges",
-              "util:utility.string", "util:utility.constant_wrapper"
-          ])
+          cc_util("utility/utility.cc", "utility", deps=[f"util:{d}" for d in ["utility.covariant_value","utility.facade","utility.hash","utility.ranges","utility.string","utility.constant_wrapper"]])
           cc_util("memory/autorelease_pool.cc", "memory.autorelease_pool")
-          # memory 聚合分区
-          cc_util("memory/memory.cc", "memory", deps=[
-              "util:memory.autorelease_pool", "util:memory.comparator",
-              "util:memory.noinit_allocator"
-          ])
+          cc_util("memory/memory.cc", "memory", deps=[f"util:{d}" for d in ["memory.autorelease_pool","memory.comparator","memory.noinit_allocator"]])
           cc_util("functional/function_ref.cc", "functional.function_ref")
           cc_util("functional/function_constant.cc", "functional.function_constant")
           cc_util("functional/regular_return.cc", "functional.regular_return")
           cc_util("functional/bind.cc", "functional.bind")
-          # functional 聚合分区
-          cc_util("functional/functional.cc", "functional", deps=[
-              "util:functional.bind", "util:functional.elide",
-              "util:functional.function_constant", "util:functional.function_ref",
-              "util:functional.regular_return"
-          ])
+          cc_util("functional/functional.cc", "functional", deps=[f"util:{d}" for d in ["functional.bind","functional.elide","functional.function_constant","functional.function_ref","functional.regular_return"]])
           cc_util("platform/lockable.cc", "platform.lockable")
           cc_util("platform/stop_token.cc", "platform.stop_token")
           cc_util("container/sealed_map.cc", "container.sealed_map")
           cc_util("meta/algorithm.cc", "meta.algorithm")
           cc_util("utility/variant.cc", "utility.variant")
-
-          # 生成 util 主模块 PCM
+          # 生成 util 主模块
           src = os.path.join(UTIL_DIR, "_module.cc")
           pcm = os.path.join(OBJ_DIR, "util.pcm")
           extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
           subprocess.run(cmd, check=True)
           compiled["util"] = pcm
-
-          # 占位的 timer.cc（作为普通实现文件）
+          # 占位的 timer.cc
           src = os.path.join(UTIL_DIR, "platform/timer.cc")
           obj = os.path.join(OBJ_DIR, "util_platform_timer.o")
           subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra, check=True)
@@ -361,7 +344,7 @@ jobs:
           for mod in sorted(all_modules):
               compile_module(mod)
 
-          # 编译剩余的普通文件
+          # 编译剩余普通文件
           mod_files = set()
           for fl in module_sources.values():
               mod_files.update(fl)
