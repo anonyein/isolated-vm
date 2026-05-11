@@ -1,4 +1,4 @@
-name: Build Android (Hybrid: Hardcoded util + Auto scan rest)
+name: Build Android (Hybrid)
 
 on:
   workflow_dispatch:
@@ -181,6 +181,7 @@ jobs:
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
+          # 替换 timer.cc 为空实现
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -224,18 +225,19 @@ jobs:
 
           OBJ_DIR = os.path.join(BUILD_DIR, "objs")
           os.makedirs(OBJ_DIR, exist_ok=True)
-          compiled = {}
+          compiled = {}   # 模块全名 -> PCM 路径
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
 
-          def cc_util(rel, part=None, deps=[]):
+          def cc_util(rel, part=None, deps=None):
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(OBJ_DIR, f"util-{part}.pcm") if part else None
-              obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}")
+              obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}.o")
               extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
-              for d in deps:
-                  if d in compiled:
-                      extra.append(f"-fmodule-file={d}={compiled[d]}")
+              if deps:
+                  for d in deps:
+                      if d in compiled:
+                          extra.append(f"-fmodule-file={d}={compiled[d]}")
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: util:{part}")
@@ -262,22 +264,41 @@ jobs:
           cc_util("type_traits/type_pack.cc", "type_traits.type_pack")
           cc_util("type_traits/function_traits.cc", "type_traits.function_traits")
           cc_util("utility/string.cc", "utility.string")
-          cc_util("type_traits/type_traits.cc", "type_traits", deps=["util:type_traits.type_pack","util:type_traits.function_traits","util:type_traits.type_of","util:type_traits.transform"])
+          # type_traits 聚合分区需要依赖其所有子分区
+          cc_util("type_traits/type_traits.cc", "type_traits", deps=[
+              "util:type_traits.type_pack", "util:type_traits.function_traits",
+              "util:type_traits.type_of", "util:type_traits.transform"
+          ])
           cc_util("utility/covariant_value.cc", "utility.covariant_value")
-          cc_util("utility/utility.cc", "utility", deps=["util:utility.covariant_value","util:utility.facade","util:utility.hash","util:utility.ranges","util:utility.string","util:utility.constant_wrapper"])
+          # utility 聚合分区
+          cc_util("utility/utility.cc", "utility", deps=[
+              "util:utility.covariant_value", "util:utility.facade",
+              "util:utility.hash", "util:utility.ranges",
+              "util:utility.string", "util:utility.constant_wrapper"
+          ])
           cc_util("memory/autorelease_pool.cc", "memory.autorelease_pool")
-          cc_util("memory/memory.cc", "memory", deps=["util:memory.autorelease_pool","util:memory.comparator","util:memory.noinit_allocator"])
+          # memory 聚合分区
+          cc_util("memory/memory.cc", "memory", deps=[
+              "util:memory.autorelease_pool", "util:memory.comparator",
+              "util:memory.noinit_allocator"
+          ])
           cc_util("functional/function_ref.cc", "functional.function_ref")
           cc_util("functional/function_constant.cc", "functional.function_constant")
           cc_util("functional/regular_return.cc", "functional.regular_return")
           cc_util("functional/bind.cc", "functional.bind")
-          cc_util("functional/functional.cc", "functional", deps=["util:functional.bind","util:functional.elide","util:functional.function_constant","util:functional.function_ref","util:functional.regular_return"])
+          # functional 聚合分区
+          cc_util("functional/functional.cc", "functional", deps=[
+              "util:functional.bind", "util:functional.elide",
+              "util:functional.function_constant", "util:functional.function_ref",
+              "util:functional.regular_return"
+          ])
           cc_util("platform/lockable.cc", "platform.lockable")
           cc_util("platform/stop_token.cc", "platform.stop_token")
           cc_util("container/sealed_map.cc", "container.sealed_map")
           cc_util("meta/algorithm.cc", "meta.algorithm")
           cc_util("utility/variant.cc", "utility.variant")
 
+          # 生成 util 主模块 PCM
           src = os.path.join(UTIL_DIR, "_module.cc")
           pcm = os.path.join(OBJ_DIR, "util.pcm")
           extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
@@ -285,12 +306,14 @@ jobs:
           subprocess.run(cmd, check=True)
           compiled["util"] = pcm
 
+          # 占位的 timer.cc（作为普通实现文件）
           src = os.path.join(UTIL_DIR, "platform/timer.cc")
           obj = os.path.join(OBJ_DIR, "util_platform_timer.o")
           subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra, check=True)
 
           print("utility 模块编译完成，开始自动扫描剩余模块...")
 
+          # 扫描非 utility 的源文件
           cc_files = []
           for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
               dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark", "utility")]
@@ -338,6 +361,7 @@ jobs:
           for mod in sorted(all_modules):
               compile_module(mod)
 
+          # 编译剩余的普通文件
           mod_files = set()
           for fl in module_sources.values():
               mod_files.update(fl)
