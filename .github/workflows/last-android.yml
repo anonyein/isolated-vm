@@ -114,7 +114,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      - name: 配置 CMake（重新启用模块扫描）
+      - name: 配置 CMake（重新启用模块扫描并注入 Boost 头文件）
         shell: bash
         run: |
           mkdir -p fake-boost/lib/cmake/Boost
@@ -140,7 +140,6 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          # 重新启用模块扫描，确保模块依赖正确
           set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 scans" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
@@ -168,14 +167,14 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（清理不兼容标志，修复 timer.cc）
+      - name: 修复源码（精确针对 .cc 文件，恢复弹性模块扫描环境）
         shell: bash
         run: |
           echo "修复源码..."
-          # 删除所有 import std; 行
+          # 1. 删除所有 .cc 文件中的 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-          
-          # 创建 bits/stdc++.h 到 NDK 头文件目录
+
+          # 2. 创建 bits/stdc++.h 到 NDK 的 C++ 头文件目录
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -234,28 +233,28 @@ jobs:
           #include <version>
           STD_HEADER
 
-          # 为所有模块文件添加 module; 和 #include <bits/stdc++.h>
-          for f in $(grep -rl 'module ' packages/); do
+          # 3. 为所有包含模块声明的 .cc 文件添加 module; 和 #include
+          find packages -name '*.cc' -exec grep -lE '(export )?module ' {} \; | while IFS= read -r f; do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
             sed -i '1i\module;' "$f"
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 为非模块文件添加 #include <bits/stdc++.h>
-          for f in $(find packages -name '*.cc' -exec grep -LP '(?:export\s+)?module\s' {} \;); do
+          # 4. 为普通 .cc 文件在第一行插入 #include
+          find packages -name '*.cc' -exec grep -LE '(export )?module ' {} \; | while IFS= read -r f; do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 修复 elide.cc GCC 扩展语法
+          # 5. 修复 elide.cc 的 GCC 扩展语法
           sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
           sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-          
-          # 修复 meta/algorithm.cc 中的 GCC 扩展语法
+
+          # 6. 修复 meta/algorithm.cc 的 GCC 扩展
           sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
 
-          # 替换 timer.cc 为空实现，避免 std::thread / stop_token 问题
+          # 7. 替换 timer.cc 为空实现
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -272,13 +271,11 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 清理 ninja 不兼容标志并修复扫描路径
+      - name: 清理 ninja 不兼容标志并注入 Boost 路径
         run: |
-          # 删除不兼容的标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-          # 为所有 clang++ 和 clang-scan-deps 命令添加 Boost 头文件路径
           find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ |& -isystem /tmp/host-boost-headers |g' {} \;
           find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps |& -isystem /tmp/host-boost-headers |g' {} \;
 
