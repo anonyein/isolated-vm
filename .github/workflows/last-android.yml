@@ -1,4 +1,4 @@
-name: Build Android (Recursive Deps)
+name: Build Android (Final Sorted Compile)
 
 on:
   workflow_dispatch:
@@ -198,7 +198,7 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 完整手动编译（递归依赖保证）
+      - name: 完整手动编译（“先叶子后聚合” + 全量 PCM 传递）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -234,11 +234,10 @@ jobs:
                   if f.endswith(".cc"):
                       cc_files.append(os.path.join(root, f))
 
-          module_sources = collections.defaultdict(list)
-          edges = []
-          defined_modules = set()
-          # 记录每个模块的直接依赖（用于递归编译）
-          direct_imports = collections.defaultdict(list)
+          # 提取模块信息
+          module_sources = collections.defaultdict(list)  # 模块全名 -> 源文件路径
+          # 提取每个模块的直接依赖（分区导入，如 :type_traits.transform）
+          imports_map = collections.defaultdict(list)      # 模块全名 -> [导入的分区全名]
 
           for fpath in cc_files:
               with open(fpath, "r", errors="ignore") as f:
@@ -246,56 +245,69 @@ jobs:
               exported = re.findall(r'export module (\S+?);', content)
               if exported:
                   mod = exported[0]
-                  defined_modules.add(mod)
                   module_sources[mod].append(fpath)
+                  # 提取 import :xxx 的依赖
                   imports = re.findall(r'import (\S+?);', content)
                   for imp in imports:
                       if imp.startswith(":"):
                           full = f"{mod}{imp}"
-                          edges.append((fpath, mod, full))
-                          direct_imports[mod].append(full)
-                      else:
-                          edges.append((fpath, mod, imp))
-                          direct_imports[mod].append(imp)
+                          imports_map[mod].append(full)
 
-          # 构建依赖图（只用于信息，编译时用递归保证顺序）
+          # 构建依赖图，用于计算“被依赖次数”（入度）
+          graph = collections.defaultdict(list)
+          indegree = collections.defaultdict(int)
+          all_modules = set(module_sources.keys())
+          for m in all_modules:
+              indegree[m] = indegree.get(m, 0)
+          for mod, deps in imports_map.items():
+              for dep in deps:
+                  if dep in all_modules and dep != mod:
+                      graph[dep].append(mod)
+                      indegree[mod] += 1
+
+          # 拓扑排序：入度为 0 的先编译
+          queue = [m for m in all_modules if indegree[m] == 0]
+          sorted_modules = []
+          while queue:
+              m = queue.pop(0)
+              sorted_modules.append(m)
+              for nxt in graph[m]:
+                  indegree[nxt] -= 1
+                  if indegree[nxt] == 0:
+                      queue.append(nxt)
+
+          # 补全可能未被排序的模块（如循环依赖）
+          for m in all_modules:
+              if m not in sorted_modules:
+                  sorted_modules.append(m)
+
+          print(f"发现 {len(all_modules)} 个模块，按拓扑排序开始编译...")
+
           compiled = {}   # 模块全名 -> PCM 路径
 
           def compile_module(mod_name):
-              if mod_name in compiled:
-                  return
-              # 先递归编译所有直接依赖
-              for dep in direct_imports.get(mod_name, []):
-                  if dep in defined_modules:
-                      compile_module(dep)
-              # 编译自身
               src = module_sources[mod_name][0]
               pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
               obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
-              extra = []
-              for name, path in compiled.items():
-                  if name != mod_name:
-                      extra.append(f"-fmodule-file={name}={path}")
-              if ':' in mod_name:
-                  main_mod = mod_name.split(':')[0]
-                  if main_mod in compiled:
-                      flag = f"-fmodule-file={main_mod}={compiled[main_mod]}"
-                      if flag not in extra:
-                          extra.append(flag)
-              # 编译为接口（生成 PCM）
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
-              print(f"PCM: {mod_name}")
-              subprocess.run(cmd, check=True)
-              compiled[mod_name] = pcm
-              # 编译对象文件
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
-              subprocess.run(cmd, check=True)
 
-          # 按照字母顺序编译所有模块（因为它们都会递归依赖，顺序不再关键）
-          for mod in sorted(defined_modules):
+              # 传递所有已编译的 PCM
+              extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
+
+              # 生成 PCM
+              cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
+              print(f"PCM: {mod_name}")
+              subprocess.run(cmd_pcm, check=True)
+              compiled[mod_name] = pcm
+
+              # 生成对象文件
+              cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
+              subprocess.run(cmd_obj, check=True)
+
+          # 按拓扑顺序编译所有模块
+          for mod in sorted_modules:
               compile_module(mod)
 
-          # 编译普通文件
+          # 编译普通文件（不使用模块的）
           mod_files = set()
           for fl in module_sources.values():
               mod_files.update(fl)
@@ -303,7 +315,8 @@ jobs:
               if fpath not in mod_files:
                   obj = os.path.join(OBJ_DIR, f"{os.path.relpath(fpath, SRC_ROOT).replace('/', '_')}.o")
                   extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
-                  subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj] + extra, check=True)
+                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj] + extra
+                  subprocess.run(cmd, check=True)
 
           # 链接
           print("正在链接...")
