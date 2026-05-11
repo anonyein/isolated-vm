@@ -1,4 +1,4 @@
-name: Build Android (Final Sorted Compile)
+name: Build Android (Topo + Lazy Deps)
 
 on:
   workflow_dispatch:
@@ -198,7 +198,7 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 完整手动编译（“先叶子后聚合” + 全量 PCM 传递）
+      - name: 完整手动编译（拓扑 + 按需编译）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -235,9 +235,9 @@ jobs:
                       cc_files.append(os.path.join(root, f))
 
           # 提取模块信息
-          module_sources = collections.defaultdict(list)  # 模块全名 -> 源文件路径
-          # 提取每个模块的直接依赖（分区导入，如 :type_traits.transform）
-          imports_map = collections.defaultdict(list)      # 模块全名 -> [导入的分区全名]
+          module_sources = collections.defaultdict(list)
+          imports_map = collections.defaultdict(list)
+          all_modules = set()
 
           for fpath in cc_files:
               with open(fpath, "r", errors="ignore") as f:
@@ -245,18 +245,19 @@ jobs:
               exported = re.findall(r'export module (\S+?);', content)
               if exported:
                   mod = exported[0]
+                  all_modules.add(mod)
                   module_sources[mod].append(fpath)
-                  # 提取 import :xxx 的依赖
                   imports = re.findall(r'import (\S+?);', content)
                   for imp in imports:
                       if imp.startswith(":"):
                           full = f"{mod}{imp}"
                           imports_map[mod].append(full)
+                      else:
+                          imports_map[mod].append(imp)
 
-          # 构建依赖图，用于计算“被依赖次数”（入度）
+          # 计算拓扑排序（用于优先编译被依赖较少的模块）
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
-          all_modules = set(module_sources.keys())
           for m in all_modules:
               indegree[m] = indegree.get(m, 0)
           for mod, deps in imports_map.items():
@@ -265,7 +266,6 @@ jobs:
                       graph[dep].append(mod)
                       indegree[mod] += 1
 
-          # 拓扑排序：入度为 0 的先编译
           queue = [m for m in all_modules if indegree[m] == 0]
           sorted_modules = []
           while queue:
@@ -275,39 +275,40 @@ jobs:
                   indegree[nxt] -= 1
                   if indegree[nxt] == 0:
                       queue.append(nxt)
-
-          # 补全可能未被排序的模块（如循环依赖）
           for m in all_modules:
               if m not in sorted_modules:
                   sorted_modules.append(m)
 
-          print(f"发现 {len(all_modules)} 个模块，按拓扑排序开始编译...")
+          print(f"发现 {len(all_modules)} 个模块，开始编译（拓扑 + 按需依赖）...")
 
           compiled = {}   # 模块全名 -> PCM 路径
 
           def compile_module(mod_name):
+              if mod_name in compiled:
+                  return
+              # 先确保依赖编译
+              for dep in imports_map.get(mod_name, []):
+                  if dep in all_modules and dep not in compiled:
+                      compile_module(dep)
+              # 编译当前模块
               src = module_sources[mod_name][0]
               pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
               obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
-
-              # 传递所有已编译的 PCM
               extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
-
               # 生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
               print(f"PCM: {mod_name}")
               subprocess.run(cmd_pcm, check=True)
               compiled[mod_name] = pcm
-
               # 生成对象文件
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               subprocess.run(cmd_obj, check=True)
 
-          # 按拓扑顺序编译所有模块
+          # 按拓扑顺序编译（但会通过按需编译自动补齐）
           for mod in sorted_modules:
               compile_module(mod)
 
-          # 编译普通文件（不使用模块的）
+          # 编译普通文件
           mod_files = set()
           for fl in module_sources.values():
               mod_files.update(fl)
