@@ -114,7 +114,7 @@ jobs:
           find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
           find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
 
-      - name: 配置 CMake
+      - name: 配置 CMake（重新启用模块扫描）
         shell: bash
         run: |
           mkdir -p fake-boost/lib/cmake/Boost
@@ -140,7 +140,8 @@ jobs:
           set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
           set(ANDROID_STL c++_shared)
           set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++20 scans" FORCE)
+          # 重新启用模块扫描，确保模块依赖正确
+          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 scans" FORCE)
           set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
           NDK_EOF
 
@@ -167,11 +168,14 @@ jobs:
             -DIVM_INSTALL=copy \
             -G Ninja
 
-      - name: 修复源码（针对性解决 auto_js 和 isolated_vm 缺失问题）
+      - name: 修复源码（清理不兼容标志，修复 timer.cc）
         shell: bash
         run: |
           echo "修复源码..."
+          # 删除所有 import std; 行
           find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
+          
+          # 创建 bits/stdc++.h 到 NDK 头文件目录
           NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           mkdir -p "${NDK_CXX_HEADERS}/bits"
           cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
@@ -229,34 +233,29 @@ jobs:
           #include <bit>
           #include <version>
           STD_HEADER
-          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
-          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-          sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
-          sed -i '/^export module util:meta\.algorithm;$/a\import :type_traits.type_pack;' packages/utility/meta/algorithm.cc
-          sed -i '/^export module util:meta\.algorithm;$/a\import :utility;' packages/utility/meta/algorithm.cc
-          sed -i '/^export module util:utility\.variant;$/a\import :type_traits.transform;' packages/utility/utility/variant.cc
 
-          for f in $(grep -rl 'module util' packages/); do
+          # 为所有模块文件添加 module; 和 #include <bits/stdc++.h>
+          for f in $(grep -rl 'module ' packages/); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '/^module;$/d' "$f"
             sed -i '1i\module;' "$f"
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 修复其他分区导入
-          for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
-            sed -i '/^import :type_traits\.transform;$/d' "$file"
-            sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
+          # 为非模块文件添加 #include <bits/stdc++.h>
+          for f in $(find packages -name '*.cc' -exec grep -LP '(?:export\s+)?module\s' {} \;); do
+            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
+            sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
-          sed -i '/^export module util:functional\.bind;$/a\import :type_traits.function_traits;' packages/utility/functional/bind.cc
-          sed -i '/^export module util:functional\.bind;$/a\import :type_traits;' packages/utility/functional/bind.cc
-          sed -i '/^export module util:platform\.lockable;$/a\import :type_traits.type_of;' packages/utility/platform/lockable.cc
-          sed -i '/^export module util:platform\.stop_token;$/a\import :functional;' packages/utility/platform/stop_token.cc
-          sed -i '/^export module util:platform\.stop_token;$/a\import :utility;' packages/utility/platform/stop_token.cc
-          sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
-          sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
 
-          # 替换 timer.cc 为空实现
+          # 修复 elide.cc GCC 扩展语法
+          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
+          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
+          
+          # 修复 meta/algorithm.cc 中的 GCC 扩展语法
+          sed -i -E '/const auto \[\.\.\. indices \]/s/\[\.\.\. indices \]/[...indices]/' packages/utility/meta/algorithm.cc
+
+          # 替换 timer.cc 为空实现，避免 std::thread / stop_token 问题
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -273,29 +272,13 @@ jobs:
           }
           TIMER_EOF
 
-          # 修复 auto_js 缺失导致的 assertions.cc 失败
-          # 将其变为不依赖 auto_js 模块的普通文件
-          sed -i '/^import auto_js;$/d' packages/auto_js/js/assertions.cc
-          sed -i '1i\#include <bits/stdc++.h>' packages/auto_js/js/assertions.cc
-
-          # 修复 isolated_vm 分区文件：确保有合法的模块声明
-          for f in \
-            packages/backend_napi_v8/api/value/accept.cc \
-            packages/backend_napi_v8/api/value/value.cc \
-            packages/backend_napi_v8/api/value/primitive.cc; do
-            cat > "$f" << 'ISOLATED_EOF'
-          module;
-          #include <bits/stdc++.h>
-          module isolated_vm;
-          // empty implementation to satisfy compilation
-          ISOLATED_EOF
-          done
-
-      - name: 清理 ninja 不兼容标志并注入 Boost 路径
+      - name: 清理 ninja 不兼容标志并修复扫描路径
         run: |
+          # 删除不兼容的标志
           find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
           find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
+          # 为所有 clang++ 和 clang-scan-deps 命令添加 Boost 头文件路径
           find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ |& -isystem /tmp/host-boost-headers |g' {} \;
           find build -name '*.ninja' -exec sed -i 's|/tmp/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps |& -isystem /tmp/host-boost-headers |g' {} \;
 
