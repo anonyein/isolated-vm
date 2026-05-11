@@ -181,7 +181,6 @@ jobs:
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
 
-          # 替换 timer.cc 为空实现
           cat > packages/utility/platform/timer.cc << 'TIMER_EOF'
           module;
           #include <bits/stdc++.h>
@@ -225,7 +224,7 @@ jobs:
 
           OBJ_DIR = os.path.join(BUILD_DIR, "objs")
           os.makedirs(OBJ_DIR, exist_ok=True)
-          compiled = {}   # 模块全名 -> PCM 路径
+          compiled = {}
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
 
@@ -278,21 +277,20 @@ jobs:
           cc_util("container/sealed_map.cc", "container.sealed_map")
           cc_util("meta/algorithm.cc", "meta.algorithm")
           cc_util("utility/variant.cc", "utility.variant")
-          # 生成 util 主模块
+
           src = os.path.join(UTIL_DIR, "_module.cc")
           pcm = os.path.join(OBJ_DIR, "util.pcm")
           extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
           subprocess.run(cmd, check=True)
           compiled["util"] = pcm
-          # 占位的 timer.cc
+
           src = os.path.join(UTIL_DIR, "platform/timer.cc")
           obj = os.path.join(OBJ_DIR, "util_platform_timer.o")
           subprocess.run([CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra, check=True)
 
           print("utility 模块编译完成，开始自动扫描剩余模块...")
 
-          # 扫描非 utility 的源文件
           cc_files = []
           for root, dirs, files in os.walk(os.path.join(SRC_ROOT, "packages")):
               dirs[:] = [d for d in dirs if d not in ("node_modules", "test", "tests", "deps", "benchmark", "utility")]
@@ -340,7 +338,6 @@ jobs:
           for mod in sorted(all_modules):
               compile_module(mod)
 
-          # 编译剩余普通文件
           mod_files = set()
           for fl in module_sources.values():
               mod_files.update(fl)
