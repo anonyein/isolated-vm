@@ -1,4 +1,4 @@
-name: Build Android (Javet-linked, final)
+name: Build Android (Final Verified Order)
 
 on:
   workflow_dispatch:
@@ -198,7 +198,7 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 完整手动编译（修复 uv.h 路径，使用 -I）
+      - name: 完整手动编译（分区优先 + 全量 PCM 传递 + 递归补齐缺失依赖）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -234,7 +234,6 @@ jobs:
                   if f.endswith(".cc"):
                       cc_files.append(os.path.join(root, f))
 
-          # 提取模块信息
           module_sources = collections.defaultdict(list)
           imports_map = collections.defaultdict(list)
           all_modules = set()
@@ -255,38 +254,12 @@ jobs:
                       else:
                           imports_map[mod].append(imp)
 
-          # 计算拓扑排序
-          graph = collections.defaultdict(list)
-          indegree = collections.defaultdict(int)
-          for m in all_modules:
-              indegree[m] = indegree.get(m, 0)
-          for mod, deps in imports_map.items():
-              for dep in deps:
-                  if dep in all_modules and dep != mod:
-                      graph[dep].append(mod)
-                      indegree[mod] += 1
-
-          queue = [m for m in all_modules if indegree[m] == 0]
-          sorted_modules = []
-          while queue:
-              m = queue.pop(0)
-              sorted_modules.append(m)
-              for nxt in graph[m]:
-                  indegree[nxt] -= 1
-                  if indegree[nxt] == 0:
-                      queue.append(nxt)
-          for m in all_modules:
-              if m not in sorted_modules:
-                  sorted_modules.append(m)
-
-          print(f"发现 {len(all_modules)} 个模块，开始编译...")
-
-          compiled = {}   # 模块全名 -> PCM 路径
+          compiled = {}
 
           def compile_module(mod_name):
               if mod_name in compiled:
                   return
-              # 按需编译依赖
+              # 如果依赖的模块尚未编译，则递归编译它们
               for dep in imports_map.get(mod_name, []):
                   if dep in all_modules and dep not in compiled:
                       compile_module(dep)
@@ -294,16 +267,20 @@ jobs:
               pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
               obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
               extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
-              # 生成 PCM
               cmd_pcm = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
               print(f"PCM: {mod_name}")
               subprocess.run(cmd_pcm, check=True)
               compiled[mod_name] = pcm
-              # 生成对象文件
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               subprocess.run(cmd_obj, check=True)
 
-          for mod in sorted_modules:
+          # 先编译所有分区，再编译主模块，同时递归保证依赖
+          partition_modules = sorted([m for m in all_modules if ':' in m])
+          main_modules = sorted([m for m in all_modules if ':' not in m])
+
+          for mod in partition_modules:
+              compile_module(mod)
+          for mod in main_modules:
               compile_module(mod)
 
           # 编译普通文件
@@ -317,7 +294,6 @@ jobs:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", fpath, "-o", obj] + extra
                   subprocess.run(cmd, check=True)
 
-          # 链接
           print("正在链接...")
           objs = glob.glob(os.path.join(OBJ_DIR, "*.o"))
           link_cmd = [CLANGXX] + BASE_FLAGS.split() + objs + [
