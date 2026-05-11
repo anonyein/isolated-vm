@@ -1,4 +1,4 @@
-name: Build Android (Topo + Lazy Deps)
+name: Build Android (Javet-linked, final)
 
 on:
   workflow_dispatch:
@@ -198,7 +198,7 @@ jobs:
           }
           TIMER_EOF
 
-      - name: 完整手动编译（拓扑 + 按需编译）
+      - name: 完整手动编译（修复 uv.h 路径，使用 -I）
         working-directory: ${{ github.workspace }}
         shell: python3 {0}
         run: |
@@ -215,10 +215,10 @@ jobs:
           BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
                        f"-isystem /tmp/host-boost-headers " \
                        f"-isystem {SRC_ROOT}/packages/utility/include " \
-                       f"-isystem {NODE_DIR}/src " \
-                       f"-isystem {NODE_DIR}/deps/v8/include " \
-                       f"-isystem {NODE_DIR}/deps/uv/include " \
-                       f"-isystem {NODE_DIR}/include/node " \
+                       f"-I {NODE_DIR}/src " \
+                       f"-I {NODE_DIR}/deps/v8/include " \
+                       f"-I {NODE_DIR}/deps/uv/include " \
+                       f"-I {NODE_DIR}/include/node " \
                        f"-isystem {SRC_ROOT}/packages/auto_js/napi/include " \
                        f"-isystem {SRC_ROOT}/packages/backend_napi_v8/runtime " \
                        f"-DEXPORT_IS_EXPORT -DNAPI_VERSION=10 -O3 -DNDEBUG"
@@ -255,7 +255,7 @@ jobs:
                       else:
                           imports_map[mod].append(imp)
 
-          # 计算拓扑排序（用于优先编译被依赖较少的模块）
+          # 计算拓扑排序
           graph = collections.defaultdict(list)
           indegree = collections.defaultdict(int)
           for m in all_modules:
@@ -279,18 +279,17 @@ jobs:
               if m not in sorted_modules:
                   sorted_modules.append(m)
 
-          print(f"发现 {len(all_modules)} 个模块，开始编译（拓扑 + 按需依赖）...")
+          print(f"发现 {len(all_modules)} 个模块，开始编译...")
 
           compiled = {}   # 模块全名 -> PCM 路径
 
           def compile_module(mod_name):
               if mod_name in compiled:
                   return
-              # 先确保依赖编译
+              # 按需编译依赖
               for dep in imports_map.get(mod_name, []):
                   if dep in all_modules and dep not in compiled:
                       compile_module(dep)
-              # 编译当前模块
               src = module_sources[mod_name][0]
               pcm = os.path.join(OBJ_DIR, f"{mod_name.replace(':', '-')}.pcm")
               obj = os.path.join(OBJ_DIR, f"{os.path.relpath(src, SRC_ROOT).replace('/', '_')}.o")
@@ -304,7 +303,6 @@ jobs:
               cmd_obj = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               subprocess.run(cmd_obj, check=True)
 
-          # 按拓扑顺序编译（但会通过按需编译自动补齐）
           for mod in sorted_modules:
               compile_module(mod)
 
