@@ -48,8 +48,7 @@ jobs:
         with:
           node-version: 24
       - uses: pnpm/action-setup@v4       # [FIX] @v5 不存在
-        with:
-          version: 9
+
       - name: 安装 npm 依赖并编译 TypeScript
         run: |
           pnpm install --frozen-lockfile
