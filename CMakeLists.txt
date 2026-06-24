@@ -1,19 +1,7 @@
 message(STATUS "Cmake version: ${CMAKE_VERSION}")
 
 # Mess of `import std` configuration
-if(WIN32)
-	cmake_minimum_required(VERSION 4.3.0 FATAL_ERROR)
-	set(CMAKE_CXX_STDLIB_MODULES_JSON ms-stl.modules.json)
-elseif(APPLE)
-	cmake_minimum_required(VERSION 4.0.0 FATAL_ERROR)
-	execute_process(COMMAND brew --prefix llvm OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE BREW_LLVM_LOCATION RESULT_VARIABLE RESULT)
-	if(NOT RESULT STREQUAL 0)
-		message(FATAL_ERROR "Failed to run brew")
-	endif()
-	set(CMAKE_CXX_STDLIB_MODULES_JSON "${BREW_LLVM_LOCATION}/lib/c++/libc++.modules.json")
-else()
-	cmake_minimum_required(VERSION 4.0.0 FATAL_ERROR)
-endif()
+cmake_minimum_required(VERSION 4.0.0 FATAL_ERROR)
 add_compile_options(
 	$<$<CXX_COMPILER_ID:Clang>:-fno-modules-reduced-bmi>
 	$<$<CXX_COMPILER_ID:Clang>:-Wno-include-angled-in-module-purview>
@@ -28,7 +16,7 @@ elseif(TEST_STDLIB STREQUAL "stl")
 	# Or test compilation against STL
 	# ninja -C build-stl backend_napi_v8
 	add_compile_options(--target=x86_64-pc-windows -Wno-character-conversion -Wno-language-extension-token -Wno-nested-anon-types -Wno-extra-semi -Wno-ignored-attributes)
-	add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
+	add_compile_definitions(_ITERATOR_DEBUG_LEVEL=0)
 	include_directories(/root/windows/include /root/windows/shared /root/windows/ucrt /root/windows/um /root/windows/boost)
 	set(CMAKE_CXX_STDLIB_MODULES_JSON "/root/windows/stl.modules.json")
 	set(COMPILE_ONLY ON)
@@ -59,7 +47,7 @@ set(CMAKE_CXX_MODULE_STD ON)
 # Use lld (for LTO), and also gc-sections
 set(CMAKE_LINKER_TYPE LLD)
 add_compile_options(-fdata-sections -ffunction-sections)
-add_link_options(-Wl,--icf=all)
+# add_link_options(-Wl,--icf=all)
 if(LINUX)
 	# Not supported in ld64 [darwin], or lld-link [windows]
 	add_link_options(-Wl,--gc-sections)
@@ -118,9 +106,13 @@ if(MSVC)
 	add_compile_options(/Zc:__cplusplus)
 endif()
 
-# Windows flags. You want /MT and not /MD
-if(WIN32 AND NOT CMAKE_BUILD_TYPE STREQUAL Debug)
-	set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+# Windows flags. You want /MT and not /MD. This must match the v8 configuration.
+if(WIN32 AND NOT DEFINED(CMAKE_MSVC_RUNTIME_LIBRARY))
+	if(CMAKE_BUILD_TYPE STREQUAL Debug)
+		set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDebug)
+	else()
+		set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+	endif()
 endif()
 
 # Windows Clang flags
@@ -130,37 +122,22 @@ if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL Clang)
 	add_compile_options(-Wno-unknown-attributes)
 endif()
 
-# Clang & GCC diagnostic flags. GCC can't compile this project right now but I am hopeful.
+# Clang & GCC diagnostic flags.
 if(CMAKE_CXX_COMPILER_ID STREQUAL Clang OR CMAKE_CXX_COMPILER_ID STREQUAL GNU)
 	add_compile_options(-fdiagnostics-color -Wall -Wextra)
 	if(NOT COMPILE_ONLY)
 		add_compile_options(-Wpedantic)
-	endif()
-	if(NOT CMAKE_BUILD_TYPE STREQUAL Debug)
-		# Soften common development warnings
-		add_compile_options(
-			-Wno-unused-but-set-variable
-			-Wno-unused-result
-		)
-	endif()
-endif()
 
-# Clang feature flags
-if(CMAKE_CXX_COMPILER_ID STREQUAL Clang)
-	# Ignore warnings from `expand_def` using gnu c-preprocessor against clang compiler.
-	add_compile_options(-Wno-gnu-line-marker)
-	# Debug / Release configuration flags
-	if(CMAKE_BUILD_TYPE STREQUAL Debug)
-		# Enable (A|L|UB)SAN
-		add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address,undefined>)
-		add_link_options(-fsanitize=address,undefined -shared-libasan)
-	else()
-		# clang-18 complains about `std::aligned_storage` within `std::shared_ptr` compiling against
-		# libstdc++
-		add_compile_options(-Wno-deprecated-declarations)
 		# Unused parameters in assert(..)
 		add_compile_options(-Wno-unused-parameter)
 	endif()
+endif()
+
+# Sanitizer features
+if(LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL Clang AND CMAKE_BUILD_TYPE STREQUAL Debug)
+	# Enable (A|L|UB)SAN
+	add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address,undefined>)
+	add_link_options(-fsanitize=address,undefined -shared-libasan)
 endif()
 
 # Convert file into a binary blob and embed it into a C++ source file.
@@ -180,50 +157,12 @@ function(target_embed_content TARGET FILE IDENTIFIER)
 	target_sources(${TARGET} PRIVATE "${OUT_FILE}.c")
 endfunction()
 
-# Generate lightly preprocessed C++ source files, to workaround P3034R1
-function(target_preprocessed_sources TARGET SEARCH REPLACE)
-	set(FILE_SET ${ARGV})
-	list(POP_FRONT FILE_SET) # TARGET
-	list(POP_FRONT FILE_SET) # SEARCH
-	list(POP_FRONT FILE_SET) # REPLACE
-
-	if("${SEARCH}" STREQUAL "${REPLACE}")
-		# No-op replacement directly uses original sources
-		target_sources(${TARGET} ${FILE_SET})
-	else()
-		# Generated sources with macro replacement
-		set(GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.${REPLACE}")
-		file(MAKE_DIRECTORY "${GEN_DIR}")
-		file(WRITE "${GEN_DIR}/.clang-tidy" "Checks: '-*'")
-		set(SCOPE)
-		set(NEXT_SCOPE)
-		foreach(FILE ${FILE_SET})
-			# Uppercase "files" are actually scope keywords
-			if("${FILE}" MATCHES "^[A-Z_]+$")
-				list(APPEND NEXT_SCOPE "${FILE}")
-				continue()
-			elseif(NEXT_SCOPE)
-				set(SCOPE ${NEXT_SCOPE})
-				set(NEXT_SCOPE)
-			endif()
-			# Add generator command
-			add_custom_command(
-				DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${FILE}"
-				OUTPUT "${GEN_DIR}/${FILE}"
-				COMMAND sh -c "${PROJECT_SOURCE_DIR}/scripts/cmake/expand_def ${CMAKE_CURRENT_SOURCE_DIR}/${FILE} -D${SEARCH}=${REPLACE} >${GEN_DIR}/${FILE}"
-			)
-			set_source_files_properties("${GEN_DIR}/${FILE}" PROPERTIES GENERATED TRUE)
-			target_sources(${TARGET} ${SCOPE} "${GEN_DIR}/${FILE}")
-		endforeach()
-	endif()
-endfunction()
-
-# `find_package_from_npm` from `@auto_js/js`
+# `find_package_from_npm` & `triplet_util` from `@auto_js/js`
 include(FindNpmPackage)
+include(TripletUtil)
 
 # Mark exported symbols as exported
 set(EXPORT_IS_EXPORT ON)
-add_definitions(-DEXPORT_IS_EXPORT)
 
 # nodejs require-able module
 add_subdirectory(packages/isolated-vm/addon)

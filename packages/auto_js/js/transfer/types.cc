@@ -31,17 +31,20 @@ struct forward : util::pointer_facade {
 		// NOLINTNEXTLINE(google-explicit-constructor)
 		forward(forward<From, FromTag> from) :
 				value_{*std::move(from)} {}
-
-		explicit forward(const Type& value, Tag /*tag*/ = {}) :
-				value_{value} {}
-		explicit forward(Type&& value, Tag /*tag*/ = {}) :
-				value_{std::move(value)} {}
+		explicit forward(std::convertible_to<Type> auto&& value, Tag /*tag*/ = {}) :
+				value_{std::forward<decltype(value)>(value)} {}
 
 		constexpr auto operator*(this auto&& self) -> auto&& { return std::forward<decltype(self)>(self).value_; }
 
 	private:
 		Type value_;
 };
+
+template <class Type>
+forward(Type) -> forward<Type>;
+
+template <class Type, class Tag>
+forward(Type, Tag) -> forward<Type, Tag>;
 
 // Extract the target type from an `accept`-like type. This is used to know what to cast the result
 // of `accept()` to.
@@ -69,14 +72,20 @@ template <class Type>
 	requires requires { typename Type::transfer_type; }
 struct transfer_type<Type> : std::type_identity<typename Type::transfer_type> {};
 
-// Check if the given type has a reference map
-constexpr auto has_reference_map = []<class Type>(std::type_identity<Type> /*type*/) consteval {
-	using visit_type = std::remove_cvref_t<Type>;
-	if constexpr (requires { visit_type::has_reference_map(); }) {
-		return visit_type::has_reference_map();
-	} else {
-		return false;
-	}
-};
+// Check if the given visit type has a reference map
+template <class Visit>
+concept visit_with_reference_map = std::remove_cvref_t<Visit>::visit_with_reference_map();
+
+// Prevents runtime throws via `transfer_strict`
+template <class Accept>
+concept accept_allows_throw = std::remove_cvref_t<Accept>::accept_allows_throw;
+
+// Extract `accept_tags_of` from an acceptor
+export template <class Accept>
+constexpr auto accept_tags_of_v = std::tuple{};
+
+export template <class Accept>
+	requires requires { Accept::accept_tags_of(); }
+constexpr auto accept_tags_of_v<Accept> = Accept::accept_tags_of();
 
 } // namespace js

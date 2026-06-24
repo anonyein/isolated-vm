@@ -3,6 +3,9 @@ import { describe, test } from "node:test";
 import * as ivm from "@isolated-vm/experimental";
 import { unsafeEvalAsStringInRealm } from "./fixtures.js";
 
+// @ts-expect-error
+const hostSupportsSharedArraySupport = process.isBun === undefined;
+
 async function check(agent: ivm.Agent, realm: ivm.Realm, fn: () => unknown) {
 	const result = await unsafeEvalAsStringInRealm(agent, realm, fn);
 	assert.deepStrictEqual(result, fn());
@@ -97,9 +100,8 @@ await test("transfer types", async () => {
 // });
 
 await describe("regressions", async () => {
-	await using agent = await ivm.Agent.create();
-
 	await test("numeric references", async () => {
+		await using agent = await ivm.Agent.create();
 		const realm = await agent.createRealm();
 		const global = await realm.acquireGlobalObject();
 		// doubles are stored as references in `value_t`, because they are bigger than 32-bit. there was
@@ -108,19 +110,23 @@ await describe("regressions", async () => {
 	});
 
 	await test("numeric indices", async () => {
+		await using agent = await ivm.Agent.create();
 		const realm = await agent.createRealm();
 		const global = await realm.acquireGlobalObject();
 		// numeric array indices broke as part of a double to int32_t change.
 		await global.set("xx", [ false, true ]);
 	});
 
-	await test("seen index type", async () => {
-		const realm = await agent.createRealm();
-		const global = await realm.acquireGlobalObject();
-		const payload = {
-			number: 0,
-			buffer: [ new Uint8Array(new SharedArrayBuffer(0)) ],
-		};
-		await global.set("xx", [ payload ]);
-	});
+	if (hostSupportsSharedArraySupport) {
+		await test("seen index type", async () => {
+			await using agent = await ivm.Agent.create();
+			const realm = await agent.createRealm();
+			const global = await realm.acquireGlobalObject();
+			const payload = {
+				number: 0,
+				buffer: [ new Uint8Array(new SharedArrayBuffer(0)) ],
+			};
+			await global.set("xx", [ payload ]);
+		});
+	}
 });

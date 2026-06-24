@@ -46,7 +46,7 @@ constexpr auto make_free_function(auto function) {
 							callback,
 							std::tuple_cat(
 								std::forward_as_tuple(env),
-								js::transfer_out<std::tuple<Args...>>(info.arguments(), env)
+								js::transfer_out<std::tuple<js::functional::parameter_transfer_as_t<Args>...>>(info.arguments(), env)
 							)
 						);
 					}};
@@ -96,7 +96,7 @@ constexpr auto make_constructor_function(auto constructor) {
 				// Tag the result
 				napi::invoke0(napi_type_tag_object, napi_env{env}, info.this_arg(), &type_tag_for<Type>);
 				// Wrap w/ finalizer
-				return apply_finalizer(std::move(instance), [ & ](Type* instance, napi_finalize finalize, void* hint) -> napi_value {
+				return apply_finalizer(std::move(instance), [ & ](Type* instance, node_api_basic_finalize finalize, void* hint) -> napi_value {
 					napi::invoke0(napi_wrap, napi_env{env}, info.this_arg(), instance, finalize, hint, nullptr);
 					return info.this_arg();
 				});
@@ -117,7 +117,7 @@ constexpr auto make_constructor_function(auto constructor) {
 								callback,
 								std::tuple_cat(
 									std::forward_as_tuple(env, value_of<object_tag>::from(info.this_arg())),
-									js::transfer_out<std::tuple<Args...>>(info.arguments(), env)
+									js::transfer_out<std::tuple<js::functional::parameter_transfer_as_t<Args>...>>(info.arguments(), env)
 								)
 							);
 							return wrap(std::move(instance));
@@ -214,7 +214,7 @@ constexpr auto make_member_function(Method method) {
 							callback,
 							std::tuple_cat(
 								std::forward_as_tuple(**maybe_that, env),
-								js::transfer_out<std::tuple<Args...>>(info.arguments(), env)
+								js::transfer_out<std::tuple<js::functional::parameter_transfer_as_t<Args>...>>(info.arguments(), env)
 							)
 						);
 					}};

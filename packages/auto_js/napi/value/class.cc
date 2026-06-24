@@ -37,12 +37,12 @@ template <class Type>
 template <class... Args>
 auto value_for_class_of<Type>::transfer_construct(auto& env, auto instance, std::tuple<Args...> runtime_args) const -> value_of<object_tag> {
 	using element_type = decltype(instance)::element_type;
-	auto construct = [ & ](napi_value this_arg) mutable -> napi_value {
+	auto construct = [ & ](napi_value this_arg) -> napi_value {
 		// Tag `this_arg`
 		napi::invoke0(napi_type_tag_object, napi_env{env}, this_arg, &type_tag_for<element_type>);
 
 		// Wrap w/ finalizer
-		return apply_finalizer(std::move(instance), [ & ](element_type* instance, napi_finalize finalize, void* hint) -> napi_value {
+		return apply_finalizer(std::move(instance), [ & ](element_type* instance, node_api_basic_finalize finalize, void* hint) -> napi_value {
 			napi::invoke0(napi_wrap, napi_env{env}, this_arg, instance, finalize, hint, nullptr);
 			return this_arg;
 		});

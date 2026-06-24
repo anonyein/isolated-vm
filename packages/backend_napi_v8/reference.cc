@@ -1,13 +1,10 @@
 module backend_napi_v8;
-import :agent;
+import :agent_handle;
 import :environment;
 import :lock;
 import :reference;
 import :utility;
-import auto_js;
-import napi_js;
 import std;
-import v8_js;
 
 namespace backend_napi_v8 {
 
@@ -36,24 +33,20 @@ reference_handle::reference_handle(const agent_handle::lock& lock, agent_handle 
 				return reference_handle{lock, std::move(agent), std::move(realm), value.As<v8::Object>()};
 			} else {
 				const auto type_of = [ & ]() -> js::typeof_kind {
-					if (value->IsNullOrUndefined()) {
-						if (value->IsNull()) {
-							return js::typeof_kind::null;
-						} else {
-							return js::typeof_kind::undefined;
-						}
+					if (value->IsUndefined()) {
+						return js::typeof_kind::undefined;
+					} else if (value->IsNull()) {
+						return js::typeof_kind::null;
+					} else if (value->IsString()) {
+						return js::typeof_kind::string;
 					} else if (value->IsNumber()) {
 						return js::typeof_kind::number;
-					} else if (value->IsName()) {
-						if (value->IsString()) {
-							return js::typeof_kind::string;
-						} else {
-							return js::typeof_kind::symbol;
-						}
 					} else if (value->IsBoolean()) {
 						return js::typeof_kind::boolean;
 					} else if (value->IsBigInt()) {
 						return js::typeof_kind::bigint;
+					} else if (value->IsSymbol()) {
+						return js::typeof_kind::symbol;
 					} else {
 						std::unreachable();
 					}
@@ -81,7 +74,7 @@ reference_handle::reference_handle(const agent_handle::lock& lock, agent_handle 
 			return reference_handle{std::move(agent), type_of, std::move(realm), js::iv8::make_shared_remote(lock, value.As<v8::Value>())};
 		}}} {}
 
-auto reference_handle::copy(environment& env) -> js::forward<js::napi::value_of<>> {
+auto reference_handle::copy(environment& env) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(env);
 	switch (typeof_) {
 		case js::typeof_kind::null:
@@ -111,7 +104,7 @@ auto reference_handle::copy(environment& env) -> js::forward<js::napi::value_of<
 	return js::forward{promise};
 }
 
-auto reference_handle::get(environment& env, js::string_t name) -> js::forward<js::napi::value_of<>> {
+auto reference_handle::get(environment& env, js::string_t name) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(env, [](environment& env, reference_handle reference) -> auto {
 		return js::forward{reference_handle::class_template(env).construct(env, std::move(reference))};
 	});
@@ -167,7 +160,7 @@ auto reference_handle::get(environment& env, js::string_t name) -> js::forward<j
 	return js::forward{promise};
 }
 
-auto reference_handle::set(environment& env, js::string_t name, js::forward<js::napi::value_of<>> value_local) -> js::forward<js::napi::value_of<>> {
+auto reference_handle::set(environment& env, js::string_t name, js::forward<js::napi::value_of<>> value_local) -> forward_promise_type {
 	auto value = js::transfer_out<js::value_t>(*value_local, env);
 	auto [ promise, resolver ] = make_promise(env);
 	switch (typeof_) {
@@ -216,7 +209,7 @@ auto reference_handle::set(environment& env, js::string_t name, js::forward<js::
 	return js::forward{promise};
 }
 
-auto reference_handle::invoke(environment& env, js::forward<js::napi::value_of<list_tag>> params_local) -> js::forward<js::napi::value_of<>> {
+auto reference_handle::invoke(environment& env, js::forward<js::napi::value_of<list_tag>> params_local) -> forward_promise_type {
 	auto params = js::transfer_out<js::values_vector_t>(*params_local, env);
 	auto [ promise, resolver ] = make_promise(env);
 	if (typeof_ == js::typeof_kind::function) {
@@ -229,13 +222,13 @@ auto reference_handle::invoke(environment& env, js::forward<js::napi::value_of<l
 			) -> void {
 				auto maybe_result = context_scope_operation(agent_lock, realm->deref(agent_lock), [ & ](const realm_scope& lock) -> auto {
 					return iv8::invoke_externalized_error_scope(lock, [ & ]() -> js::value_t {
-						auto local = value->deref(lock).As<v8::Function>();
-						auto arg_values = js::transfer_in_strict<std::vector<v8::Local<v8::Value>>>(std::move(params), lock);
-						auto result = iv8::unmaybe(local->Call(lock.isolate(), lock.context(), v8::Undefined(lock.isolate()), static_cast<int>(arg_values.size()), arg_values.data()));
-						return js::transfer_out<js::value_t>(result, lock);
+						auto fn = value->deref(lock).As<iv8::Function>();
+						return fn->apply<js::value_t>(lock, std::move(params));
 					});
 				});
-				resolver.resolve(completion_record{std::move(maybe_result)});
+				if (maybe_result) {
+					resolver.resolve(completion_record{std::move(*maybe_result)});
+				}
 			},
 			std::move(resolver),
 			realm_,

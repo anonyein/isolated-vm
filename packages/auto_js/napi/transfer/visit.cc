@@ -1,5 +1,5 @@
 export module napi_js:visit;
-import :container;
+import :utility;
 import :value;
 import std;
 import util;
@@ -10,7 +10,7 @@ namespace js::napi {
 // Instantiated in the acceptor that corresponds to a napi visitor
 struct reference_map_type {
 		template <class Type>
-		using type = napi::value_map<Type>;
+		using type = napi::unordered_value_map<Type>;
 };
 
 // Visitor which may visit only property names. `symbol` should probably be rethought since they are
@@ -104,7 +104,6 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 		using reference_map_t<Reference, reference_map_type>::lookup_or_visit;
 
 		visit_value(auto* /*transfer*/, Environment& env) :
-				reference_map_t<Reference, reference_map_type>{env},
 				env_{env} {}
 
 		// If the private `immediate` operation is defined: this public operation will first
@@ -135,7 +134,7 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 
 		template <class Accept>
 		auto operator()(value_of<number_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			if (std::bit_cast<v8::Local<v8::Number>>(subject)->IsInt32()) {
+			if (maybe_is_number_int32(subject).value_or(false)) {
 				return immediate(value_of<number_tag_of<std::int32_t>>::from(subject), accept);
 			} else {
 				return immediate(value_of<number_tag_of<double>>::from(subject), accept);
@@ -153,48 +152,116 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 
 			// Check the reference map, and lookup type via napi
 			return lookup_or_visit(subject, [ & ]() -> accept_target_t<Accept> {
-				auto type_of = napi::invoke(napi_typeof, napi_env{*this}, subject);
-				switch (type_of) {
-					case napi_undefined:
-						return (*this)(value_of<undefined_tag>::from(subject), accept);
-					case napi_null:
-						return (*this)(value_of<null_tag>::from(subject), accept);
-					case napi_boolean:
-						return (*this)(value_of<boolean_tag>::from(subject), accept);
-					case napi_number:
-						return (*this)(value_of<number_tag>::from(subject), accept);
-					case napi_string:
-						return immediate(value_of<string_tag>::from(subject), accept);
-					case napi_symbol:
-						return immediate(value_of<symbol_tag>::from(subject), accept);
-					case napi_object:
-						{
-							if (napi::invoke(napi_is_array, napi_env{*this}, subject)) {
-								return immediate(value_of<list_tag>::from(subject), accept);
-							} else if (napi::invoke(napi_is_date, napi_env{*this}, subject)) {
-								return immediate(value_of<date_tag>::from(subject), accept);
-							} else if (napi::invoke(napi_is_typedarray, napi_env{*this}, subject)) {
-								return immediate(value_of<typed_array_tag>::from(subject), accept);
-							} else if (napi::invoke(napi_is_dataview, napi_env{*this}, subject)) {
-								return immediate(value_of<data_view_tag>::from(subject), accept);
-							} else if (std::bit_cast<v8::Local<v8::Object>>(subject)->IsSharedArrayBuffer()) {
-								return immediate(value_of<shared_array_buffer_tag>::from(subject), accept);
-							} else if (napi::invoke(napi_is_arraybuffer, napi_env{*this}, subject)) {
-								return immediate(value_of<array_buffer_tag>::from(subject), accept);
-							} else if (napi::invoke(napi_is_promise, napi_env{*this}, subject)) {
-								return immediate(value_of<promise_tag>::from(subject), accept);
-							} else {
-								return immediate(value_of<dictionary_tag>::from(subject), accept);
-							}
+				// This is the pure-napi implementation
+				auto slow_path = util::overloaded{
+					[ & ]() -> accept_target_t<Accept> {
+						auto type_of = napi::invoke(napi_typeof, napi_env{*this}, subject);
+						switch (type_of) {
+							case napi_undefined:
+								return (*this)(value_of<undefined_tag>::from(subject), accept);
+							case napi_null:
+								return (*this)(value_of<null_tag>::from(subject), accept);
+							case napi_boolean:
+								return (*this)(value_of<boolean_tag>::from(subject), accept);
+							case napi_number:
+								return (*this)(value_of<number_tag>::from(subject), accept);
+							case napi_string:
+								return immediate(value_of<string_tag>::from(subject), accept);
+							case napi_symbol:
+								return immediate(value_of<symbol_tag>::from(subject), accept);
+							case napi_object:
+								return immediate(value_of<object_tag>::from(subject), accept);
+							case napi_function:
+								return immediate(value_of<function_tag>::from(subject), accept);
+							case napi_external:
+								return immediate(value_of<external_tag>::from(subject), accept);
+							case napi_bigint:
+								return immediate(value_of<bigint_tag>::from(subject), accept);
 						}
-					case napi_function:
-						return immediate(value_of<function_tag>::from(subject), accept);
-					case napi_external:
-						return immediate(value_of<external_tag>::from(subject), accept);
-					case napi_bigint:
-						return immediate(value_of<bigint_tag>::from(subject), accept);
+						std::unreachable();
+					},
+
+					[](auto /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+				};
+
+				// Universal fast checks
+				auto fast_path = util::overloaded{
+					[ & ](undefined_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_undefined(napi_env{*this}, subject) ? (*this)(value_of<undefined_tag>::from(subject), accept) : next();
+					},
+					[ & ](null_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_null(napi_env{*this}, subject) ? (*this)(value_of<null_tag>::from(subject), accept) : next();
+					},
+					[ & ](boolean_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						if (fast_is_false(napi_env{*this}, subject)) {
+							return (*this)(value_of<false_tag>::from(subject), accept);
+						} else if (fast_is_true(napi_env{*this}, subject)) {
+							return (*this)(value_of<true_tag>::from(subject), accept);
+						} else {
+							return next();
+						}
+					},
+				};
+
+				// Extended fast checks
+				auto extended_fast_path = util::overloaded{
+					[ & ](number_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_number(subject) ? (*this)(value_of<number_tag>::from(subject), accept) : next();
+					},
+					[ & ](string_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_string(subject) ? immediate(value_of<string_tag>::from(subject), accept) : next();
+					},
+					[ & ](bigint_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_bigint(subject) ? immediate(value_of<bigint_tag>::from(subject), accept) : next();
+					},
+					[ & ](date_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return napi::invoke(napi_is_date, napi_env{*this}, subject) ? immediate(value_of<date_tag>::from(subject), accept) : next();
+					},
+					[ & ](list_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_array(subject) ? immediate(value_of<list_tag>::from(subject), accept) : next();
+					},
+					[ & ](object_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						// nb: You can't really skip the subsequent is promise, is date, is arraybuffer, etc
+						// checks. We don't really want to accept those types here, I don't think..
+						return fast_is_object(subject) ? immediate(value_of<object_tag>::from(subject), accept) : next();
+					},
+					[ & ](function_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+						return fast_is_function(subject) ? immediate(value_of<function_tag>::from(subject), accept) : next();
+					},
+
+					// Skip these, otherwise `number_tag` and `string_tag` are invoked twice, which we don't
+					// differentiate between.
+					[]<class Type>(number_tag_of<Type> /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+					[]<class Type>(string_tag_of<Type> /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+				};
+
+				if (has_extended_fast_is_functions) {
+					auto traverse = util::overloaded{fast_path, extended_fast_path, slow_path};
+					return util::template_traverse(accept_tags_of_v<Accept>, traverse);
+				} else {
+					auto traverse = util::overloaded{fast_path, slow_path};
+					return util::template_traverse(accept_tags_of_v<Accept>, traverse);
 				}
-				std::unreachable();
+			});
+		}
+
+		template <class Accept>
+		auto operator()(value_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			return lookup_or_visit(subject, [ & ]() -> accept_target_t<Accept> {
+				return util::template_traverse(
+					accept_tags_of_v<Accept>,
+					util::overloaded{
+						// Fast paths
+						[ & ](data_block_tag /*tag*/, auto /*next*/) -> accept_target_t<Accept> { return accept_tagged(subject, accept); },
+						[ & ](array_buffer_tag /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+						[ & ](shared_array_buffer_tag /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+
+						// Slow path
+						[ & ]() -> accept_target_t<Accept> {
+							return immediate(subject, accept);
+						}
+					}
+				);
 			});
 		}
 
@@ -206,7 +273,7 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 	private:
 		// I think this only applies to `symbol_tag`
 		template <class Accept, class Tag>
-			requires std::is_base_of_v<primitive_tag, Tag>
+			requires std::is_convertible_v<Tag, primitive_tag>
 		auto immediate(value_of<Tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept_tagged(subject, accept);
 		}
@@ -214,10 +281,10 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 		// strings
 		template <class Accept>
 		auto immediate(value_of<string_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			if (std::bit_cast<v8::Local<v8::String>>(subject)->IsOneByte()) {
-				return accept_tagged(value_of<string_tag_of<char16_t>>::from(subject), accept);
-			} else {
+			if (maybe_is_string_latin1(subject).value_or(false)) {
 				return accept_tagged(value_of<string_tag_of<char>>::from(subject), accept);
+			} else {
+				return accept_tagged(value_of<string_tag_of<char16_t>>::from(subject), accept);
 			}
 		}
 
@@ -229,6 +296,28 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 
 		// date
 		template <class Accept>
+		auto immediate(value_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			if (napi::invoke(napi_is_array, napi_env{*this}, subject)) {
+				return immediate(value_of<list_tag>::from(subject), accept);
+			} else if (napi::invoke(napi_is_date, napi_env{*this}, subject)) {
+				return immediate(value_of<date_tag>::from(subject), accept);
+			} else if (napi::invoke(napi_is_typedarray, napi_env{*this}, subject)) {
+				return immediate(value_of<typed_array_tag>::from(subject), accept);
+			} else if (napi::invoke(napi_is_dataview, napi_env{*this}, subject)) {
+				return immediate(value_of<data_view_tag>::from(subject), accept);
+			} else if (maybe_is_shared_array_buffer(env_.get(), subject).value_or(false)) {
+				return immediate(value_of<shared_array_buffer_tag>::from(subject), accept);
+			} else if (is_object_array_buffer(env_.get(), subject)) {
+				return immediate(value_of<array_buffer_tag>::from(subject), accept);
+			} else if (napi::invoke(napi_is_promise, napi_env{*this}, subject)) {
+				return immediate(value_of<promise_tag>::from(subject), accept);
+			} else {
+				return immediate(value_of<dictionary_tag>::from(subject), accept);
+			}
+		}
+
+		// date
+		template <class Accept>
 		auto immediate(value_of<date_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept_tagged(subject, accept);
 		}
@@ -236,7 +325,7 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 		// data blocks
 		template <class Accept>
 		auto immediate(value_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			if (napi::invoke(napi_is_arraybuffer, napi_env{*this}, subject)) {
+			if (is_data_block_array_buffer(env_.get(), subject)) {
 				return immediate(value_of<array_buffer_tag>::from(subject), accept);
 			} else {
 				return immediate(value_of<shared_array_buffer_tag>::from(subject), accept);
@@ -244,7 +333,7 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 		}
 
 		template <class Accept, class Tag>
-			requires std::is_base_of_v<data_block_tag, Tag>
+			requires std::is_convertible_v<Tag, data_block_tag>
 		auto immediate(value_of<Tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept_tagged(subject, accept);
 		}

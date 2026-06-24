@@ -1,8 +1,7 @@
 export module v8_js:accept;
-import :array_buffer;
 import :callback_storage;
 import :hash;
-import :primitive;
+import :value;
 import auto_js;
 import std;
 import util;
@@ -15,7 +14,7 @@ template <class Lock>
 constexpr auto make_free_function(auto function);
 
 // Reference acceptor
-struct reaccept_value {
+struct reaccept_v8_value {
 		using reference_type = v8::Local<v8::Value>;
 
 		template <class Type>
@@ -25,18 +24,18 @@ struct reaccept_value {
 };
 
 // Base class for primitive acceptors. These require only an isolate lock.
-struct accept_primitive {
+struct accept_v8_primitive {
 	public:
-		accept_primitive() = delete;
-		explicit accept_primitive(isolate_lock_witness lock) :
+		accept_v8_primitive() = delete;
+		explicit accept_v8_primitive(auto* /*transfer*/, isolate_lock_witness lock) :
 				isolate_{lock.isolate()} {}
-		explicit accept_primitive(const std::convertible_to<isolate_lock_witness> auto& lock) :
-				accept_primitive{isolate_lock_witness{util::slice(lock)}} {}
+		explicit accept_v8_primitive(auto* transfer, const std::convertible_to<isolate_lock_witness> auto& lock) :
+				accept_v8_primitive{transfer, isolate_lock_witness{util::slice(lock)}} {}
 
 		[[nodiscard]] auto isolate() const -> v8::Isolate* { return isolate_; }
 
 		// Declare reference provider
-		using accept_reference_type = reaccept_value;
+		using accept_reference_type = reaccept_v8_value;
 
 		// undefined
 		auto operator()(undefined_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> v8::Local<iv8::Undefined> {
@@ -102,14 +101,15 @@ struct accept_primitive {
 };
 
 // Generic acceptor for most values. These require a context lock.
-struct accept_value : accept_primitive {
+struct accept_v8_value : accept_v8_primitive {
 	public:
-		using accept_type = accept_primitive;
-		explicit accept_value(context_lock_witness lock) :
-				accept_type{lock},
+		using accept_type = accept_v8_primitive;
+		using accept_target_type = v8::Local<v8::Value>;
+		explicit accept_v8_value(auto* transfer, context_lock_witness lock) :
+				accept_type{transfer, lock},
 				context_{lock.context()} {}
-		explicit accept_value(const std::convertible_to<context_lock_witness> auto& lock) :
-				accept_value{context_lock_witness{util::slice(lock)}} {}
+		explicit accept_v8_value(auto* transfer, const std::convertible_to<context_lock_witness> auto& lock) :
+				accept_v8_value{transfer, context_lock_witness{util::slice(lock)}} {}
 
 		// accept all primitives
 		using accept_type::operator();
@@ -155,7 +155,7 @@ struct accept_value : accept_primitive {
 		}
 
 		// function
-		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, v8::Local<v8::FunctionTemplate> subject) const -> v8::Local<v8::Function>;
+		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, v8::Local<v8::FunctionTemplate> subject) const -> v8::Local<iv8::Function>;
 
 		// array
 		auto operator()(this const auto& self, list_tag /*tag*/, auto& visit, auto&& subject)
@@ -174,6 +174,40 @@ struct accept_value : accept_primitive {
 						unmaybe(result);
 					}
 				},
+			};
+		}
+
+		// vectors
+		auto operator()(this const auto& self, vector_tag /*tag*/, auto& visit, auto&& subject)
+			-> js::deferred_receiver<v8::Local<v8::Array>, decltype(self), decltype(visit), decltype(subject)> {
+			auto [... size ] = util::maybe_range_size(subject);
+			return {
+				v8::Array::New(self.isolate(), size...),
+				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
+				[](v8::Local<v8::Array> array, auto& self, auto& visit, auto /*&&*/ subject) -> void {
+					std::uint32_t ii = 0;
+					auto&& range = util::into_range(std::forward<decltype(subject)>(subject));
+					for (auto&& element : util::forward_range(std::forward<decltype(range)>(range))) {
+						auto item = visit(std::forward<decltype(element)>(element), self);
+						unmaybe(array->Set(self.context_, ii++, item));
+					}
+				},
+			};
+		}
+
+		template <std::size_t Size>
+		auto operator()(this const auto& self, tuple_tag<Size> /*tag*/, auto& visit, auto&& subject)
+			-> js::deferred_receiver<v8::Local<v8::Array>, decltype(self), decltype(visit), decltype(subject)> {
+			return {
+				v8::Array::New(self.isolate(), Size),
+				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
+				[](v8::Local<v8::Array> array, auto& self, auto& visit, auto /*&&*/ tuple) -> void {
+					const auto [... indices ] = util::sequence<Size>;
+					(..., [ & ]() -> void {
+						auto element = visit(indices, std::forward<decltype(tuple)>(tuple), self);
+						unmaybe(array->Set(self.context_, indices, element));
+					}());
+				}
 			};
 		}
 
@@ -231,30 +265,194 @@ struct accept_value : accept_primitive {
 			return js::referenceable_value{make(buffer)};
 		};
 
+		// structs
+		template <std::size_t Size>
+		auto operator()(this const auto& self, struct_tag<Size> /*tag*/, auto& visit, auto&& subject)
+			-> js::deferred_receiver<v8::Local<v8::Object>, decltype(self), decltype(visit), decltype(subject)> {
+			return {
+				v8::Object::New(self.isolate()),
+				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
+				[](v8::Local<v8::Object> object, auto& self, auto& visit, auto /*&&*/ subject) -> void {
+					self.template accept_entry_pair_struct<Size>(visit, object, std::forward<decltype(subject)>(subject));
+				}
+			};
+		}
+
+		template <std::size_t Size>
+		auto accept_entry_pair_struct(this const auto& self, auto& visit, v8::Local<v8::Object> target, auto&& subject) -> void {
+			const auto [... indices ] = util::sequence<Size>;
+			(..., [ & ]() -> void {
+				auto accept_entry = accept_entry_pair<decltype(self), decltype(self)>{self};
+				auto entry = visit(std::integral_constant<std::size_t, indices>{}, std::forward<decltype(subject)>(subject), accept_entry);
+				unmaybe(target->Set(self.context_, entry.first, entry.second));
+			}());
+		}
+
 	private:
 		v8::Local<v8::Context> context_;
 };
 
-// Acceptor with template environment
-template <class Meta, class Environment>
-struct accept_template;
+// `accept_v8_value` subclass, implementing specialized acceptor with lock type.
+template <class Lock>
+struct accept_v8_value_with;
 
-template <class Meta, class Agent, class... Implements>
-struct accept_template<Meta, isolate_lock_witness_of<Agent, Implements...>> : accept_primitive {
+template <>
+struct accept_v8_value_with<context_lock_witness> : accept_v8_value {
+		using accept_v8_value::accept_v8_value;
+		using accept_v8_value::operator();
+		using accept_v8_value::witness;
+
+		// function instantiation
+		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, auto subject) const -> v8::Local<iv8::Function> {
+			auto [ function, length ] = make_free_function<context_lock_witness>(std::move(subject).callback);
+			auto [ callback, data ] = make_callback_storage(witness(), std::move(function));
+			return unmaybe(v8::Function::New(witness().context(), callback, data, length, v8::ConstructorBehavior::kThrow).template As<iv8::Function>());
+		}
+};
+
+template <class Lock>
+struct accept_v8_value_with : accept_v8_value {
 	public:
-		explicit accept_template(auto* /*transfer*/, const isolate_lock_witness_of<Agent, Implements...>& lock) :
-				accept_primitive{lock},
+		accept_v8_value_with(auto* transfer, const Lock& lock) :
+				accept_v8_value{transfer, lock},
+				lock_{lock} {}
+
+		using accept_v8_value::operator();
+
+		// function instantiation
+		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, auto subject) const -> v8::Local<iv8::Function> {
+			auto [ function, length ] = make_free_function<Lock>(std::move(subject).callback);
+			auto [ callback, data ] = make_callback_storage(lock_.get(), std::move(function));
+			return v8::Function::New(lock_.get().context(), callback, data, length, v8::ConstructorBehavior::kThrow);
+		}
+
+	private:
+		std::reference_wrapper<const Lock> lock_;
+};
+
+// Acceptor with template environment
+template <class Meta, class Lock>
+struct accept_v8_template : accept_v8_primitive {
+	public:
+		explicit accept_v8_template(auto* transfer, const Lock& lock) :
+				accept_v8_primitive{transfer, lock},
 				lock_{lock} {}
 
 		// function template
 		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, auto subject) const -> v8::Local<v8::FunctionTemplate> {
-			using lock_type = const context_lock_witness_of<Agent, Implements...>&;
-			auto [ callback, data ] = make_callback_storage(lock_.get(), make_free_function<lock_type>(std::move(subject).callback));
-			return v8::FunctionTemplate::New(lock_.get().isolate(), callback, data, v8::Local<v8::Signature>{}, 0, v8::ConstructorBehavior::kThrow);
+			auto [ function, length ] = make_free_function<Lock>(std::move(subject).callback);
+			auto [ callback, data ] = make_callback_storage(lock_.get(), std::move(function));
+			return v8::FunctionTemplate::New(lock_.get().isolate(), callback, data, v8::Local<v8::Signature>{}, length, v8::ConstructorBehavior::kThrow);
 		}
 
 	private:
-		std::reference_wrapper<const isolate_lock_witness_of<Agent, Implements...>> lock_;
+		std::reference_wrapper<const Lock> lock_;
+};
+
+// object key lookup (struct_template, etc)
+template <class Meta, auto Key, class Type>
+struct accept_v8_property_value {
+	public:
+		explicit constexpr accept_v8_property_value(auto* transfer) :
+				first{transfer},
+				second{transfer} {}
+
+		auto operator()(dictionary_tag /*tag*/, auto& visit, const auto& subject) const -> Type {
+			if (auto local = first(std::type_identity<void>{}, visit.first); subject.has(local)) {
+				return visit.second(subject.get(local), second);
+			} else {
+				return second(undefined_in_tag{}, visit.second, std::monostate{});
+			}
+		}
+
+	private:
+		mutable visit_key_literal<Key, v8::Local<v8::Object>> first;
+		accept_value<Meta, Type> second;
+};
+
+// `return_into(...)`
+struct return_into_marker {};
+
+auto return_into(auto& env, v8::ReturnValue<v8::Value> return_value, auto value) -> void {
+	std::ignore = js::transfer_in_strict<return_into_marker>(std::move(value), env, return_value);
+}
+
+template <class Type>
+auto return_into(auto& /*env*/, v8::ReturnValue<v8::Value> return_value, js::forward<v8::Local<Type>> value) -> void {
+	return_value.Set(*value);
+}
+
+template <class Lock>
+struct accept_v8_return_into : accept_v8_value_with<Lock> {
+	private:
+		using accept_type = accept_v8_value_with<Lock>;
+		using value_type = v8::ReturnValue<v8::Value>;
+
+	public:
+		accept_v8_return_into(auto* transfer, const auto& lock, value_type return_value) :
+				accept_type{transfer, lock},
+				return_value_{return_value} {}
+
+		auto operator()(boolean_tag /*tag*/, visit_holder /*visit*/, const auto& subject) const -> return_into_marker {
+			return_value_.Set(bool{subject});
+			return {};
+		}
+
+		template <class Type>
+		auto operator()(number_tag_of<Type> /*tag*/, visit_holder /*visit*/, const auto& subject) const -> return_into_marker {
+			return_value_.Set(Type{subject});
+			return {};
+		}
+
+		auto operator()(null_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> return_into_marker {
+			return_value_.SetNull();
+			return {};
+		}
+
+		auto operator()(undefined_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> return_into_marker {
+			return_value_.SetUndefined();
+			return {};
+		}
+
+		auto operator()(auto tag, auto& visit, auto&& subject) const -> return_into_marker
+			requires std::invocable<const accept_type&, decltype(tag), decltype(visit), decltype(subject)> {
+			auto value = util::invoke_as<accept_type>(*this, tag, visit, std::forward<decltype(subject)>(subject));
+			return_value_.Set(js::dispatch_referenceable(std::move(value)));
+			return {};
+		}
+
+	private:
+		mutable v8::ReturnValue<v8::Value> return_value_;
+};
+
+// `object_assign(value, ...)`
+struct object_assign_marker {};
+
+export auto object_assign(auto& env, v8::Local<v8::Object> object, auto source) -> void {
+	std::ignore = js::transfer_in_strict<object_assign_marker>(std::move(source), env, object);
+}
+
+template <class Meta, class Lock>
+struct accept_v8_object_assign {
+	private:
+		using accept_type = accept_v8_value_with<Lock>;
+
+	public:
+		accept_v8_object_assign(auto* transfer, const auto& lock, v8::Local<v8::Object> object) :
+				accept_{transfer, lock},
+				object_{object} {}
+
+		template <std::size_t Size>
+		auto operator()(this const auto& self, tuple_tag<Size> /*tag*/, auto& visit, auto&& subject) -> iv8::object_assign_marker {
+			self.accept_.template accept_entry_pair_struct<Size>(visit, self.object_, std::forward<decltype(subject)>(subject));
+			return {};
+		}
+
+		consteval static auto types(auto recursive) { return accept<Meta, v8::Local<v8::Value>>::types(recursive); }
+
+	private:
+		accept_value<Meta, v8::Local<v8::Value>> accept_;
+		v8::Local<v8::Object> object_;
 };
 
 } // namespace js::iv8
@@ -262,26 +460,32 @@ struct accept_template<Meta, isolate_lock_witness_of<Agent, Implements...>> : ac
 namespace js {
 
 template <class Type>
-	requires std::is_base_of_v<v8::Primitive, Type>
-struct accept<void, v8::Local<Type>> : iv8::accept_primitive {
-		using accept_primitive::accept_primitive;
-};
+struct accept_property_subject<v8::Local<Type>> : std::type_identity<v8::Local<v8::Object>> {};
 
-template <class Type>
-struct accept<void, v8::Local<Type>> : iv8::accept_value {
-		using accept_value::accept_value;
-};
-
+// primitives
 template <class Meta, class Type>
-	requires std::is_base_of_v<v8::Template, Type>
-struct accept<Meta, v8::Local<Type>> : iv8::accept_template<Meta, typename Meta::accept_context_type> {
-		using iv8::accept_template<Meta, typename Meta::accept_context_type>::accept_template;
+	requires std::is_convertible_v<Type, v8::Primitive>
+struct accept<Meta, v8::Local<Type>> : iv8::accept_v8_primitive {
+		using accept_v8_primitive::accept_v8_primitive;
+};
+
+// values
+template <class Meta, class Type>
+struct accept<Meta, v8::Local<Type>> : iv8::accept_v8_value_with<typename Meta::accept_context_type> {
+		using iv8::accept_v8_value_with<typename Meta::accept_context_type>::accept_v8_value_with;
+};
+
+// templates
+template <class Meta, class Type>
+	requires std::is_convertible_v<Type, v8::Template>
+struct accept<Meta, v8::Local<Type>> : iv8::accept_v8_template<Meta, typename Meta::accept_context_type> {
+		using iv8::accept_v8_template<Meta, typename Meta::accept_context_type>::accept_v8_template;
 };
 
 // A `MaybeLocal` also accepts `undefined`, similar to `std::optional`.
-template <class Type>
-struct accept<void, v8::MaybeLocal<Type>> : accept<void, v8::Local<Type>> {
-		using accept_type = accept<void, v8::Local<Type>>;
+template <class Meta, class Type>
+struct accept<Meta, v8::MaybeLocal<Type>> : accept<Meta, v8::Local<Type>> {
+		using accept_type = accept<Meta, v8::Local<Type>>;
 		using accept_type::accept_type;
 
 		using accept_type::operator();
@@ -296,48 +500,25 @@ struct accept<void, v8::MaybeLocal<Type>> : accept<void, v8::Local<Type>> {
 		}
 };
 
-// return value
+// object key lookup (struct_template, etc)
+template <class Meta, auto Key, class Type>
+struct accept_property_value<Meta, Key, Type, v8::Local<v8::Object>> : iv8::accept_v8_property_value<Meta, Key, Type> {
+		using iv8::accept_v8_property_value<Meta, Key, Type>::accept_v8_property_value;
+};
+
+// return_into
 template <>
-struct accept<void, v8::ReturnValue<v8::Value>> : accept<void, v8::Local<v8::Value>> {
-		using accept_type = accept<void, v8::Local<v8::Value>>;
-		using accept_type::accept_type;
-		using value_type = v8::ReturnValue<v8::Value>;
+struct accept_property_subject<iv8::return_into_marker> : accept_property_subject<v8::Local<v8::Value>> {};
 
-		accept(iv8::context_lock_witness lock, value_type return_value) :
-				accept_type{lock},
-				return_value_{return_value} {}
-		explicit accept(const std::convertible_to<iv8::context_lock_witness> auto& lock, value_type return_value) :
-				accept{iv8::context_lock_witness{util::slice(lock)}, return_value} {}
+template <class Meta>
+struct accept<Meta, iv8::return_into_marker> : iv8::accept_v8_return_into<typename Meta::accept_context_type> {
+		using iv8::accept_v8_return_into<typename Meta::accept_context_type>::accept_v8_return_into;
+};
 
-		auto operator()(boolean_tag /*tag*/, visit_holder /*visit*/, const auto& subject) const -> value_type {
-			return_value_.Set(bool{subject});
-			return return_value_;
-		}
-
-		template <class Type>
-		auto operator()(number_tag_of<Type> /*tag*/, visit_holder /*visit*/, const auto& subject) const -> value_type {
-			return_value_.Set(Type{subject});
-			return return_value_;
-		}
-
-		auto operator()(null_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> value_type {
-			return_value_.SetNull();
-			return return_value_;
-		}
-
-		auto operator()(undefined_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> value_type {
-			return_value_.SetUndefined();
-			return return_value_;
-		}
-
-		auto operator()(auto tag, auto& visit, auto&& subject) const -> value_type
-			requires std::invocable<const accept_type&, decltype(visit), decltype(tag), decltype(subject)> {
-			return_value_.Set(util::invoke_as<accept_type>(*this, tag, visit, std::forward<decltype(subject)>(subject)));
-			return return_value_;
-		}
-
-	private:
-		mutable v8::ReturnValue<v8::Value> return_value_;
+// object_assign
+template <class Meta>
+struct accept<Meta, iv8::object_assign_marker> : iv8::accept_v8_object_assign<Meta, typename Meta::accept_context_type> {
+		using iv8::accept_v8_object_assign<Meta, typename Meta::accept_context_type>::accept_v8_object_assign;
 };
 
 } // namespace js

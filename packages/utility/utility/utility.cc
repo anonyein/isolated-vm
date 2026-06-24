@@ -4,6 +4,7 @@ export import :utility.covariant_value;
 export import :utility.facade;
 export import :utility.hash;
 export import :utility.ranges;
+export import :utility.sequence;
 export import :utility.string;
 // export import :utility.variant;
 import std;
@@ -30,22 +31,6 @@ export class non_moveable {
 		non_moveable(const non_moveable&) = delete;
 		auto operator=(const non_moveable&) = delete;
 };
-
-// Return a sequence of index constants
-export template <std::size_t Size>
-constexpr auto sequence = []() consteval -> auto {
-	// With C++26 P2686 we can do constexpr decomposition. So instead of the `tuple` of
-	// `integral_constants` it can be an array of `std::size_t`.
-	// https://clang.llvm.org/cxx_status.html
-
-	// std::array<std::size_t, Size> result{};
-	// std::ranges::copy(std::ranges::views::iota(std::size_t{0}, Size), result.begin());
-	// return result;
-
-	return []<std::size_t... Index>(std::index_sequence<Index...> /*sequence*/) consteval {
-		return std::tuple{std::integral_constant<std::size_t, Index>{}...};
-	}(std::make_index_sequence<Size>());
-}();
 
 // Checked container / range access for types which don't have `.at()`
 export auto at(auto&& range, std::size_t index) -> decltype(auto) {
@@ -140,6 +125,36 @@ struct slice_t<const Type> {
 export template <class Type>
 constexpr auto slice(const Type& value) {
 	return slice_t<const Type>{value};
+}
+
+// Implements construction of containers with variadic elements
+template <class Type>
+struct inplace_container_constructor {
+		constexpr auto operator()(auto&&... args) const -> Type {
+			return Type{std::in_place, std::forward<decltype(args)>(args)...};
+		}
+};
+
+template <class Type, std::size_t Size>
+struct inplace_container_constructor<std::array<Type, Size>> {
+		constexpr auto operator()(auto&&... args) const -> std::array<Type, Size> {
+			return std::array<Type, Size>{std::forward<decltype(args)>(args)...};
+		}
+};
+
+template <class Type, class Alloc>
+struct inplace_container_constructor<std::vector<Type, Alloc>> {
+		constexpr auto operator()(auto&&... args) const -> std::vector<Type, Alloc> {
+			auto container = std::vector<Type, Alloc>{};
+			container.reserve(sizeof...(args));
+			(..., container.emplace_back(std::forward<decltype(args)>(args)));
+			return container;
+		}
+};
+
+export template <class Type>
+auto make_inplace_container(auto&&... args) -> Type {
+	return inplace_container_constructor<Type>{}(std::forward<decltype(args)>(args)...);
 }
 
 } // namespace util

@@ -16,11 +16,11 @@ module_handle::module_handle(agent_handle agent, js::iv8::shared_remote<v8::Modu
 		module_{std::move(module)} {}
 
 auto module_handle::compile(
-	agent_handle& agent,
 	environment& env,
+	agent_handle& agent,
 	js::string_t source_text,
 	compile_module_options options
-) -> js::forward<js::napi::value_of<>> {
+) -> forward_promise_type {
 	using value_type = std::tuple<module_handle, std::optional<std::u16string>, std::vector<js::iv8::module_request>>;
 	using expected_type = std::expected<value_type, js::error_value>;
 	auto [ promise, resolver ] = make_promise(
@@ -67,42 +67,38 @@ auto module_handle::compile(
 }
 
 auto module_handle::create_capability(
-	realm_handle& realm,
 	environment& env,
-	callback_type make_capability,
+	realm_handle& realm,
+	js::napi::value_of<js::function_tag> make_capability,
 	create_capability_options options
-) -> js::forward<js::napi::value_of<>> {
+) -> forward_promise_type {
 	// Make the `subscriber_capability` and pass it to the interface maker
-	using capability_type = std::variant<callback_type, js::tagged_external<subscriber_capability>>;
+	using capability_type = std::variant<forward_callback_type, js::tagged_external<subscriber_capability>>;
 	using capability_interface_type = js::dictionary<js::dictionary_tag, js::string_t, capability_type>;
 	auto subscriber = subscriber_capability::make(env);
-	auto local_capability_interface = make_capability->call<capability_interface_type>(env, js::forward{subscriber});
+	auto local_capability_interface = make_capability.call<capability_interface_type>(env, js::forward{subscriber});
 
 	// Makes `js::free_function` which invokes the user-supplied callback capability
-	auto make_capability_callback = [ & ](callback_type capability) -> auto {
+	auto make_capability_callback = [ & ](forward_callback_type capability) -> auto {
 		// Invoked in the node thread
 		auto invoke =
 			[ callback = js::napi::make_shared_remote(env, *capability) ](
 				environment& env,
 				js::values_vector_t params
 			) -> void {
-			const auto scope = js::napi::handle_scope{napi_env{env}};
 			callback->deref(env).apply(env, std::move(params));
 		};
 		// Invoked in the isolate thread
 		return js::free_function{
-			// TODO: I don't like this `&env` capture, but `scheduler` should throw away the callback if
-			// the environment isn't still valid.
-			[ &env,
-				scheduler = env.scheduler(),
+			[ scheduler = env.scheduler(),
 				invoke = std::move(invoke) ](
 				const realm_scope& /*lock*/,
 				js::rest /*rest*/,
 				js::values_vector_t params
 			) -> void {
 				scheduler(
-					[ &env, invoke ](js::values_vector_t params) -> void {
-						invoke(env, std::move(params));
+					[ invoke ](napi_env env, napi_value /*nothing*/, js::values_vector_t params) -> void {
+						invoke(napi::environment::unsafe_get_environment_as<environment>(env), std::move(params));
 					},
 					std::move(params)
 				);
@@ -116,27 +112,30 @@ auto module_handle::create_capability(
 		auto schedule_task =
 			[ agent = realm.agent(),
 				realm = realm.realm() ](
-				auto resolver
+				auto resolver,
+				auto&&... args
 			) -> void {
 			agent.schedule(
 				[](
 					const agent_handle::lock& lock,
 					const js::iv8::shared_remote<v8::Context>& realm,
-					auto resolver
+					auto resolver,
+					auto&&... args
 				) -> void {
-					context_scope_operation(lock, realm->deref(lock), [ & ](const realm_scope& realm) mutable -> void {
-						resolver(realm);
+					context_scope_operation(lock, realm->deref(lock), [ & ](const realm_scope& realm) -> void {
+						resolver(realm, std::forward<decltype(args)>(args)...);
 					});
 				},
 				realm,
-				std::move(resolver)
+				std::move(resolver),
+				std::forward<decltype(args)>(args)...
 			);
 		};
 		return js::free_function{
 			[ accept_subscriber = subscriber->take_subscriber(),
 				schedule_task = std::move(schedule_task) ](
 				const realm_scope& lock,
-				js::forward<v8::Local<v8::Function>, function_tag> callback
+				js::forward<v8::Local<iv8::Function>> callback
 			) -> void {
 				auto callback_remote = make_shared_remote(lock, *callback);
 				auto wake =
@@ -145,14 +144,13 @@ auto module_handle::create_capability(
 						js::value_t message
 					) -> bool {
 					schedule_task(
-						[ callback_remote,
-							message = std::move(message) ](
-							const realm_scope& lock
-						) mutable -> void {
-							auto callback = callback_remote->deref(lock);
-							auto argv = js::transfer_in_strict<v8::Local<v8::Value>>(std::move(message), lock);
-							js::iv8::unmaybe(callback->Call(lock.context(), v8::Undefined(lock.isolate()), 1, &argv));
-						}
+						[ callback_remote ](
+							const realm_scope& lock,
+							js::value_t message
+						) -> void {
+							callback_remote->deref(lock)->call(lock, std::move(message));
+						},
+						std::move(message)
 					);
 					return true;
 				};
@@ -205,7 +203,7 @@ auto module_handle::create_capability(
 						return std::pair{std::move(key), std::move(fn_template)};
 					}),
 			};
-			auto module_record = context_scope_operation(lock, realm->deref(lock), [ & ](const realm_scope& realm) mutable -> auto {
+			auto module_record = context_scope_operation(lock, realm->deref(lock), [ & ](const realm_scope& realm) -> auto {
 				return js::iv8::module_record::create_synthetic(realm, std::move(options).origin, std::move(capability_interface));
 			});
 			resolver(module_handle{std::move(agent), make_shared_remote(lock, std::move(module_record))});
@@ -219,7 +217,7 @@ auto module_handle::create_capability(
 	return js::forward{promise};
 };
 
-auto module_handle::evaluate(environment& env, realm_handle& realm) -> js::forward<js::napi::value_of<>> {
+auto module_handle::evaluate(environment& env, realm_handle& realm) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(env);
 	agent_.schedule(
 		[](
@@ -254,7 +252,7 @@ auto deref_remote_link_record(js::iv8::isolate_lock_witness lock, remote_module_
 	};
 };
 
-auto module_handle::link(environment& env, realm_handle& realm, module_handle_link_record link_record) -> js::forward<js::napi::value_of<>> {
+auto module_handle::link(environment& env, realm_handle& realm, module_handle_link_record link_record) -> forward_promise_type {
 	auto scheduler = env.scheduler();
 	auto [ promise, resolver ] = make_promise(env);
 
@@ -288,9 +286,12 @@ auto module_handle::link(environment& env, realm_handle& realm, module_handle_li
 			});
 			// TODO: resolver should accept a `std::expected<T, E>`?
 			if (result) {
-				resolver.resolve(true);
-			} else {
-				resolver.reject(std::move(result).error());
+				auto expected = *std::move(result);
+				if (expected) {
+					resolver.resolve(true);
+				} else {
+					resolver.reject(std::move(expected).error());
+				}
 			}
 		},
 		std::move(resolver),
@@ -368,3 +369,11 @@ auto subscriber_capability::subscriber::subscribe(callback_type callback) -> voi
 }
 
 } // namespace backend_napi_v8
+
+// There is some spooky issue in clang v22.1.0 on macOS where if these templates are not explicitly
+// instantiated in this file it causes bad codegen throughout the project. Like code totally
+// unrelated to JS modules will throw vector out bounds exceptions, SIGBUS, asan violations. I tried
+// disabling LTO, this is the only thing that seems to work.
+[[maybe_unused]] constexpr auto template_workaround = [](js::iv8::context_lock_witness lock, js::value_t value) -> void {
+	std::ignore = js::transfer_in_strict<v8::Local<v8::Value>>(std::move(value), lock);
+};

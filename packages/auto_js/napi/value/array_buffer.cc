@@ -1,37 +1,32 @@
 module napi_js;
 import :api;
 import :array_buffer;
+import :support.host;
 import std;
 import v8;
 
 namespace js::napi {
+
+// `bound_value_for_data_block`
+bound_value_for_data_block::operator std::span<std::byte>() const {
+	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
+	void* bytes;
+	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
+	std::size_t byte_length;
+	napi::invoke0(napi_get_arraybuffer_info, env(), napi_value{*this}, &bytes, &byte_length);
+	return std::span{reinterpret_cast<std::byte*>(bytes), byte_length};
+}
 
 // `bound_value_for_array_buffer`
 bound_value_for_array_buffer::operator js::array_buffer() const {
 	return js::array_buffer{std::span<std::byte>{*this}};
 }
 
-bound_value_for_array_buffer::operator std::span<std::byte>() const {
-	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
-	void* bytes;
-	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
-	std::size_t byte_length;
-	napi::invoke0(napi_get_arraybuffer_info, env(), napi_value{*this}, &bytes, &byte_length);
-	return std::span<std::byte>{reinterpret_cast<std::byte*>(bytes), byte_length};
-}
-
 // `bound_value_for_shared_array_buffer`
 bound_value_for_shared_array_buffer::operator js::shared_array_buffer() const {
-	auto local = std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(napi_value{*this});
-	auto backing_store = local->GetBackingStore();
-	auto* data = reinterpret_cast<std::byte*>(backing_store->Data());
-	auto data_shared_ptr = std::shared_ptr<js::shared_array_buffer::array_type>{std::move(backing_store), data};
-	return js::shared_array_buffer{local->ByteLength(), std::move(data_shared_ptr)};
-}
-
-bound_value_for_shared_array_buffer::operator std::span<std::byte>() const {
-	auto local = std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(napi_value{*this});
-	return std::span<std::byte>{reinterpret_cast<std::byte*>(local->Data()), local->ByteLength()};
+	auto byte_length = shared_array_buffer_get_byte_length(value_of{*this});
+	auto backing_store = shared_array_buffer_get_backing_store(value_of{*this});
+	return js::shared_array_buffer{byte_length, std::move(backing_store)};
 }
 
 // `value_for_typed_array`
@@ -56,6 +51,7 @@ auto bound_value_for_typed_array::make_bound(const environment& env, value_of<ty
 	switch (type_tag) {
 		case napi_bigint64_array: return make(typed_array_tag_of<std::int64_t>{});
 		case napi_biguint64_array: return make(typed_array_tag_of<std::uint64_t>{});
+		case napi_float16_array: return make(typed_array_tag_of<js::float16_t>{});
 		case napi_float32_array: return make(typed_array_tag_of<float>{});
 		case napi_float64_array: return make(typed_array_tag_of<double>{});
 		case napi_int16_array: return make(typed_array_tag_of<std::int16_t>{});
@@ -64,7 +60,7 @@ auto bound_value_for_typed_array::make_bound(const environment& env, value_of<ty
 		case napi_uint16_array: return make(typed_array_tag_of<std::uint16_t>{});
 		case napi_uint32_array: return make(typed_array_tag_of<std::uint32_t>{});
 		case napi_uint8_array: return make(typed_array_tag_of<std::uint8_t>{});
-		case napi_uint8_clamped_array: return make(typed_array_tag_of<std::byte>{});
+		case napi_uint8_clamped_array: return make(typed_array_tag_of<js::uint8_clamped_t>{});
 	}
 	std::unreachable();
 }
@@ -83,9 +79,7 @@ auto value_for_data_view::make(const environment& env, value_of<array_buffer_tag
 }
 
 auto value_for_data_view::make(const environment& /*env*/, value_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<data_view_tag> {
-	auto buffer_local = std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(napi_value{buffer});
-	auto view_local = v8::DataView::New(buffer_local, byte_offset, length);
-	return value_of<data_view_tag>::from(std::bit_cast<napi_value>(view_local));
+	return make_sab_data_view(buffer, byte_offset, length);
 }
 
 // `bound_value_for_data_view`

@@ -3,21 +3,12 @@ import :api.uv_handle;
 import std;
 import util;
 
-#if _LIBCPP_VERSION
-// clang 22.1.0
-// /usr/lib/llvm-22/bin/../include/c++/v1/__new/allocate.h:39:30: error: no matching function for call to 'operator new'
-//    39 |     return static_cast<_Tp*>(__builtin_operator_new(__size, static_cast<align_val_t>(__align)));
-export {
-	using ::operator new;
-}
-#endif
-
 namespace js::napi {
 
 // Shareable libuv scheduler
 export class uv_scheduler {
 	private:
-		using task_type = util::maybe_move_only_function<auto()->void>;
+		using task_type = util::move_only_function<auto()->void>;
 
 	public:
 		auto close(util::function_ref<auto()->void> close_hook) -> void;
@@ -57,7 +48,7 @@ auto uv_scheduler::operator()(auto task, auto&&... args) const -> void {
 	auto& async = *async_;
 	auto shared = async->shared.write();
 	if (shared->is_open) {
-		shared->tasks.push_back(
+		shared->tasks.emplace_back(
 			[ task = std::move(task),
 				... args = std::forward<decltype(args)>(args) ]() mutable -> void {
 				task(std::move(args)...);

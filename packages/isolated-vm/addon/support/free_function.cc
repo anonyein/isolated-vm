@@ -9,7 +9,7 @@ namespace isolated_vm {
 template <class Lock>
 constexpr auto make_free_function(auto function) {
 	constexpr auto make_with_try_catch =
-		[]<std::constructible_from<Lock> LockAs, class... Args, bool Nx, class Result>(
+		[]<class LockAs, class... Args, bool Nx, class Result>(
 			std::type_identity<auto(LockAs, Args...) noexcept(Nx)->Result> /*signature*/,
 			auto callback
 		) -> auto {
@@ -21,7 +21,7 @@ constexpr auto make_free_function(auto function) {
 						callback,
 						std::tuple_cat(
 							std::forward_as_tuple(lock),
-							js::transfer_out<std::tuple<Args...>>(info, lock)
+							js::transfer_out<std::tuple<js::functional::parameter_transfer_as_t<Args>...>>(info, lock)
 						)
 					);
 				}};

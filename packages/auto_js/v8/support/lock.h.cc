@@ -105,8 +105,11 @@ export class context_lock_witness : public isolate_lock_witness {
 				context_{context} {}
 
 	public:
+		explicit context_lock_witness(const v8::FunctionCallbackInfo<v8::Value>& info) :
+				isolate_lock_witness{isolate_lock_witness::make_witness(info.GetIsolate())},
+				context_{isolate()->GetCurrentContext()} {}
+
 		[[nodiscard]] auto context() const -> v8::Local<v8::Context> { return context_; }
-		[[nodiscard]] static auto from_isolate(isolate_lock_witness lock) -> context_lock_witness;
 		[[nodiscard]] static auto make_witness(isolate_lock_witness lock, v8::Local<v8::Context> context) -> context_lock_witness;
 
 	private:
@@ -159,16 +162,6 @@ auto context_scope_operation(const isolate_lock_witness_of<Agent, Implements...>
 	auto context_lock = context_managed_lock{util::slice(lock), context};
 	auto witness = context_lock_witness_of{context_lock, lock};
 	return operation(witness);
-}
-
-template <class Agent, class... Implements>
-auto revive_lock_of(isolate_lock_witness lock, void* agent) -> isolate_lock_witness_of<Agent, Implements...> {
-	return isolate_lock_witness_of<Agent, Implements...>{lock, *static_cast<Agent*>(agent)};
-}
-
-template <class Agent, class... Implements>
-auto revive_lock_of(context_lock_witness lock, void* agent) -> context_lock_witness_of<Agent, Implements...> {
-	return context_lock_witness_of<Agent, Implements...>{lock, *static_cast<Agent*>(agent)};
 }
 
 } // namespace js::iv8

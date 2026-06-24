@@ -1,12 +1,27 @@
 module v8_js;
-import :array;
-import :handle;
-import :lock;
-import :primitive;
+import :object;
 import std;
 import v8;
 
 namespace js::iv8 {
+
+constexpr auto has_property(v8::Local<v8::Context> context, v8::Local<v8::Object> object, v8::Local<v8::Name> key) -> bool {
+	return iv8::unmaybe(object->HasRealNamedProperty(context, key));
+}
+
+constexpr auto has_property(v8::Local<v8::Context> context, v8::Local<v8::Object> object, v8::Local<v8::Number> key) -> bool {
+	return iv8::unmaybe(object->HasRealIndexedProperty(context, key.As<v8::Uint32>()->Value()));
+}
+
+constexpr auto has_property(v8::Local<v8::Context> context, v8::Local<v8::Object> object, v8::Local<v8::Primitive> key) -> bool {
+	// Weird `if` here since there is a "quick" `IsString()` internally, but not for name, number, or
+	// symbol.
+	if (key->IsString() || !key->IsNumber()) {
+		return has_property(context, object, key.As<v8::Name>());
+	} else {
+		return has_property(context, object, key.As<v8::Number>());
+	}
+}
 
 constexpr auto get_property(v8::Local<v8::Context> context, v8::Local<v8::Object> object, v8::Local<v8::Name> key) -> v8::Local<v8::Value> {
 	// Maybe I'm misunderstanding the "without causing side effects" part of `GetRealNamedProperty`'s
@@ -42,15 +57,27 @@ auto value_for_object::keys() const -> const value_for_array& {
 	return keys_;
 }
 
-auto value_for_object::get(v8::Local<v8::Name> key) -> v8::Local<v8::Value> {
+auto value_for_object::has(v8::Local<v8::Name> key) const -> bool {
+	return has_property(context(), util::slice(*this), key);
+}
+
+auto value_for_object::has(v8::Local<v8::Number> key) const -> bool {
+	return has_property(context(), util::slice(*this), key);
+}
+
+auto value_for_object::has(v8::Local<v8::Primitive> key) const -> bool {
+	return has_property(context(), util::slice(*this), key);
+}
+
+auto value_for_object::get(v8::Local<v8::Name> key) const -> mapped_type {
 	return get_property(context(), util::slice(*this), key);
 }
 
-auto value_for_object::get(v8::Local<v8::Number> key) -> v8::Local<v8::Value> {
+auto value_for_object::get(v8::Local<v8::Number> key) const -> mapped_type {
 	return get_property(context(), util::slice(*this), key);
 }
 
-auto value_for_object::get(v8::Local<v8::Primitive> key) -> v8::Local<v8::Value> {
+auto value_for_object::get(v8::Local<v8::Primitive> key) const -> mapped_type {
 	return get_property(context(), util::slice(*this), key);
 }
 

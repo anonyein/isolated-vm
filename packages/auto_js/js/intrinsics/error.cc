@@ -3,6 +3,7 @@ module;
 export module auto_js:intrinsics.error;
 import :enum_.types;
 import std;
+import util;
 
 namespace js {
 
@@ -20,12 +21,12 @@ export enum class error_name : std::uint8_t {
 // Base transferred JavaScript -> C++ error type. This can be caught.
 export class EXPORT error : public std::exception {
 	public:
-		explicit error(error_name name) : name_{name} {}
+		explicit error(error_name name);
 
-		[[nodiscard]] auto name() const -> error_name { return name_; }
-		[[nodiscard]] auto what() const noexcept -> const char* final { return "[JavaScript Error]"; };
+		[[nodiscard]] auto name() const -> error_name;
+		[[nodiscard]] auto what() const noexcept -> const char* final;
 		[[nodiscard]] virtual auto message() const -> std::u16string = 0;
-		[[nodiscard]] virtual auto stack() const -> std::u16string { return {}; }
+		[[nodiscard]] virtual auto stack() const -> std::u16string;
 
 	private:
 		error_name name_;
@@ -61,6 +62,12 @@ class specific_error_value : public error {
 				error{Type},
 				message_{std::move(message)} {}
 
+		// TODO: Make a template specialization for `util::cw` which just returns the bytes instead of
+		// heap strings.
+		template <auto Message>
+		explicit specific_error_value(util::constant_wrapper<Message> /*message*/) :
+				specific_error_value{std::u16string{Message.value}} {}
+
 		[[nodiscard]] auto message() const -> std::u16string final { return message_; }
 
 	private:
@@ -71,5 +78,30 @@ class specific_error_value : public error {
 export using runtime_error = specific_error_value<error_name::error>;
 export using range_error = specific_error_value<error_name::range_error>;
 export using type_error = specific_error_value<error_name::type_error>;
+
+// ---
+
+// Fix for the Windows issue noted below. There's not a lot of results for this exact error message
+// and many are very old. It is probably another modules problem. Observed in clang v21.1.6 &
+// v22.1.3. It only occurs when linking against isolated-vm from Windows, a case not covered by
+// CI/CD.
+
+// [...]/intrinsics/error.cc:23:12: error: dllimport cannot be applied to non-inline function definition
+//  23 |  explicit error(error_name name) : name_{name} {}
+//     |           ^
+
+EXPORT inline error::error(error_name name) : name_{name} {}
+
+EXPORT inline auto error::name() const -> error_name {
+	return name_;
+}
+
+EXPORT inline auto error::what() const noexcept -> const char* {
+	return "[JavaScript Error]";
+};
+
+EXPORT inline auto error::stack() const -> std::u16string {
+	return {};
+}
 
 } // namespace js

@@ -31,6 +31,8 @@ struct undefined_in_tag : tag_of<undefined_tag> {};
 
 // numerics
 struct boolean_tag : tag_of<primitive_tag> {};
+struct false_tag : tag_of<boolean_tag> {};
+struct true_tag : tag_of<boolean_tag> {};
 
 struct number_tag : tag_of<primitive_tag> {};
 template <class Type> struct number_tag_of : con_tag_of<number_tag> {};
@@ -54,7 +56,7 @@ struct error_tag : tag_of<object_tag> {};
 struct external_tag : tag_of<object_tag> {};
 
 // functions & classes
-struct function_tag : tag_of<primitive_tag> {};
+struct function_tag : tag_of<value_tag> {};
 struct class_tag : tag_of<object_tag> {};
 template <class Type>
 struct class_tag_of : tag_of<class_tag> {};
@@ -63,6 +65,11 @@ struct class_tag_of : tag_of<class_tag> {};
 struct prototype_tag : tag_of<datum_tag> {};
 struct object_prototype_tag : tag_of<prototype_tag> {};
 struct function_prototype_tag : tag_of<prototype_tag> {};
+
+// `{}` & `[]`
+struct record_tag : tag_of<object_tag> {};
+struct dictionary_tag : tag_of<record_tag> {};
+struct list_tag : tag_of<record_tag> {};
 
 // Continuous packed array-like with integer keys and known (at runtime) length. Generally
 // `arguments` or "trusted" arrays.
@@ -77,11 +84,7 @@ template <std::size_t Element> struct tuple_tag : tag_of<object_tag> {};
 // An object whose property keys are known at compile time.
 template <std::size_t Properties> struct struct_tag : tag_of<object_tag> {};
 
-// `{}` & `[]`
-struct record_tag : tag_of<object_tag> {};
-struct dictionary_tag : tag_of<record_tag> {};
-struct list_tag : tag_of<record_tag> {};
-
+// Other builtin objects
 struct date_tag : tag_of<object_tag> {};
 struct promise_tag : tag_of<object_tag> {};
 
@@ -98,10 +101,12 @@ struct data_view_tag : tag_of<array_buffer_view_tag> {};
 
 // `TypeArray` subclasses
 // typed_array_tag_of<std::uint8_t> = Uint8Array
-// typed_array_tag_of<std::byte> = Uint8ClampedArray;
+// typed_array_tag_of<js::uint8_clamped_t> = Uint8ClampedArray;
 // typed_array_tag_of<float> = Float32Array
 // typed_array_tag_of<double> = Float64Array
 // ...etc
+enum class float16_t : std::uint16_t {};
+enum class uint8_clamped_t : unsigned char {};
 struct typed_array_tag : tag_of<array_buffer_view_tag> {};
 
 template <class Type>

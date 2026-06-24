@@ -3,8 +3,8 @@ import :array_buffer;
 import :callback_info;
 import :handle.value;
 import :hash;
-import :object;
 import :unmaybe;
+import :value;
 import auto_js;
 import std;
 import v8;
@@ -30,14 +30,14 @@ struct visit_property_name {
 					auto value = value_of{witness(), subject.As<tag_to_v8<Tag>>()};
 					return accept(tag, *this, value);
 				};
-				if (subject->IsNumber()) {
-					return accept_as(number_tag_of<std::int32_t>{});
-				} else if (subject->IsString()) {
+				if (subject->IsString()) {
 					if (subject.As<v8::String>()->IsOneByte()) {
 						return accept_as(string_tag_of<char>{});
 					} else {
 						return accept_as(string_tag_of<char16_t>{});
 					}
+				} else if (subject->IsNumber()) {
+					return accept_as(number_tag_of<std::int32_t>{});
 				} else {
 					return accept_as(symbol_tag{});
 				}
@@ -49,6 +49,23 @@ struct visit_property_name {
 
 	private:
 		std::reference_wrapper<Visit> visit_;
+};
+
+// `visit_key_literal` instantiation for v8
+template <auto Key>
+struct visit_v8_key_literal {
+		explicit constexpr visit_v8_key_literal(auto* /*transfer*/) {}
+
+		auto operator()(const auto& /*anything*/, const auto& accept_or_visit) -> v8::Local<v8::Name> {
+			if (local_key_.IsEmpty()) {
+				constexpr auto key = util::make_consteval_string_view(Key);
+				local_key_ = transfer_in<v8::Local<v8::Name>>(key, accept_or_visit.witness());
+			}
+			return local_key_;
+		}
+
+	private:
+		v8::Local<v8::Name> local_key_;
 };
 
 // Implements `Visit`'s non-caching `immediate()` function as a caching visit operation.
@@ -126,14 +143,10 @@ struct visit_flat_value : reference_map_t<Reference, visit_reference_map_type> {
 		// primitives
 		template <class Accept>
 		auto immediate(v8::Local<v8::Primitive> subject, const Accept& accept) -> accept_target_t<Accept> {
-			if (subject->IsNullOrUndefined()) {
-				if (subject->IsNull()) {
-					null_ = subject;
-					return accept(null_tag{}, *this, subject);
-				} else {
-					undefined_ = subject;
-					return accept(undefined_tag{}, *this, subject);
-				}
+			if (subject->IsUndefined()) {
+				return accept(undefined_tag{}, *this, subject);
+			} else if (subject->IsNull()) {
+				return accept(null_tag{}, *this, subject);
 			} else if (subject->IsNumber()) {
 				return (*this)(subject.As<v8::Number>(), accept);
 			} else if (subject->IsName()) {
@@ -148,7 +161,7 @@ struct visit_flat_value : reference_map_t<Reference, visit_reference_map_type> {
 		}
 
 		template <class Accept, class Type>
-			requires std::is_base_of_v<primitive_tag, iv8::v8_to_tag<Type>>
+			requires std::is_convertible_v<Type, v8::Primitive>
 		auto immediate(v8::Local<Type> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept_tagged(subject, accept);
 		}
@@ -201,7 +214,7 @@ struct visit_flat_value : reference_map_t<Reference, visit_reference_map_type> {
 		}
 
 		template <class Accept, class Type>
-			requires std::is_base_of_v<data_block_tag, iv8::v8_to_tag<Type>>
+			requires std::is_convertible_v<iv8::v8_to_tag<Type>, data_block_tag>
 		auto immediate(v8::Local<Type> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept_tagged(subject, accept);
 		}
@@ -212,15 +225,16 @@ struct visit_flat_value : reference_map_t<Reference, visit_reference_map_type> {
 			return accept_tagged(subject, accept);
 		}
 
-		// promise (cannot be accepted)
+		// promise (maybe could be forwarded)
 		template <class Accept>
 		auto immediate(v8::Local<v8::Promise> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept(promise_tag{}, *this, subject);
 		}
 
-		// function (cannot be accepted)
-		template <class Accept>
-		auto immediate(v8::Local<v8::Function> subject, const Accept& accept) -> accept_target_t<Accept> {
+		// function (can be forwarded)
+		template <class Type, class Accept>
+			requires std::is_convertible_v<Type, v8::Function>
+		auto immediate(v8::Local<Type> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept(function_tag{}, *this, subject);
 		}
 
@@ -230,13 +244,8 @@ struct visit_flat_value : reference_map_t<Reference, visit_reference_map_type> {
 			return accept(iv8::v8_to_tag<Type>{}, *this, value_of{witness(), subject});
 		}
 
-		[[nodiscard]] auto is_cached_null(v8::Local<v8::Value> value) const { return value == null_; }
-		[[nodiscard]] auto is_cached_undefined(v8::Local<v8::Value> value) const { return value == undefined_; }
-
 	private:
 		isolate_lock_witness isolate_lock_;
-		v8::Local<v8::Primitive> null_;
-		v8::Local<v8::Primitive> undefined_;
 };
 
 // Primary visitor w/ `context_lock_witness`
@@ -251,9 +260,8 @@ struct visit_value : visit_flat_value<Target> {
 	public:
 		friend struct visit_flat_value<Target>;
 		using visit_type = visit_flat_value<Target>;
+		using visit_type::accept_tagged;
 		using visit_type::immediate;
-		using visit_type::is_cached_null;
-		using visit_type::is_cached_undefined;
 		using visit_type::lookup_or_visit;
 		using visit_type::witness;
 		using visit_type::operator();
@@ -266,27 +274,74 @@ struct visit_value : visit_flat_value<Target> {
 
 		template <class Accept>
 		auto operator()(v8::Local<v8::Value> subject, const Accept& accept) -> accept_target_t<Accept> {
-			// Check known address values before the map lookup
-			if (is_cached_null(subject)) {
-				return accept(null_tag{}, *this, subject);
-			} else if (is_cached_undefined(subject)) {
-				return accept(undefined_tag{}, *this, subject);
-			}
 
 			// Check the reference map, and check type
 			return lookup_or_visit(subject, [ & ]() -> accept_target_t<Accept> {
-				if (subject->IsObject()) {
-					return immediate(subject.As<v8::Object>(), accept);
-				} else {
-					return immediate(subject.As<v8::Primitive>(), accept);
-				}
+				return util::template_traverse(
+					accept_tags_of_v<Accept>,
+					util::overloaded{
+						// Fast paths
+						[ & ](undefined_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsUndefined() ? accept(undefined_tag{}, *this, subject.As<iv8::Undefined>()) : next();
+						},
+						[ & ](null_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsNull() ? accept(null_tag{}, *this, subject.As<iv8::Null>()) : next();
+						},
+						[ & ](boolean_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsBoolean() ? (*this)(subject.As<v8::Boolean>(), accept) : next();
+						},
+						[ & ](number_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsNumber() ? (*this)(subject.As<v8::Number>(), accept) : next();
+						},
+						[ & ](string_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsString() ? immediate(subject.As<v8::String>(), accept) : next();
+						},
+						[ & ](bigint_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsBigInt() ? immediate(subject.As<v8::BigInt>(), accept) : next();
+						},
+						[ & ](date_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsDate() ? immediate(subject.As<v8::Date>(), accept) : next();
+						},
+						[ & ](list_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsArray() ? immediate(subject.As<v8::Array>(), accept) : next();
+						},
+						[ & ](function_tag /*tag*/, auto next) -> accept_target_t<Accept> {
+							return subject->IsFunction() ? immediate(subject.As<iv8::Function>(), accept) : next();
+						},
+
+						// Unknown tag
+						[](auto /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+
+						// Slow path
+						[ & ]() -> accept_target_t<Accept> {
+							if (subject->IsObject()) {
+								return immediate(subject.As<v8::Object>(), accept);
+							} else {
+								return immediate(subject.As<v8::Primitive>(), accept);
+							}
+						},
+					}
+				);
 			});
 		}
 
 		template <class Accept>
 		auto operator()(v8::Local<iv8::DataBlock> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return lookup_or_visit(subject, [ & ]() -> accept_target_t<Accept> {
-				return immediate(subject, accept);
+				return util::template_traverse(
+					accept_tags_of_v<Accept>,
+					util::overloaded{
+						// Fast paths
+						[ & ](data_block_tag /*tag*/, auto /*next*/) -> accept_target_t<Accept> { return accept_tagged(subject, accept); },
+						[ & ](array_buffer_tag /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+						[ & ](shared_array_buffer_tag /*tag*/, auto next) -> accept_target_t<Accept> { return next(); },
+
+						// Slow path
+						[ & ]() -> accept_target_t<Accept> {
+							return immediate(subject, accept);
+						}
+					}
+				);
 			});
 		}
 
@@ -314,7 +369,7 @@ struct visit_value : visit_flat_value<Target> {
 			} else if (subject->IsPromise()) {
 				return immediate(subject.As<v8::Promise>(), accept);
 			} else if (subject->IsFunction()) {
-				return immediate(subject.As<v8::Function>(), accept);
+				return immediate(subject.As<iv8::Function>(), accept);
 			} else {
 				auto visit_entry = visit_entry_pair<visit_property_name<visit_value>, visit_value&>{*this};
 				return accept(dictionary_tag{}, visit_entry, value_of{witness(), subject.As<v8::Object>()});
@@ -341,6 +396,8 @@ struct visit_value : visit_flat_value<Target> {
 				return immediate(subject.As<v8::Uint8Array>(), accept);
 			} else if (subject->IsDataView()) {
 				return immediate(subject.As<v8::DataView>(), accept);
+			} else if (subject->IsUint8ClampedArray()) {
+				return immediate(subject.As<v8::Uint8ClampedArray>(), accept);
 			} else if (subject->IsInt8Array()) {
 				return immediate(subject.As<v8::Int8Array>(), accept);
 			} else if (subject->IsUint16Array()) {
@@ -351,6 +408,8 @@ struct visit_value : visit_flat_value<Target> {
 				return immediate(subject.As<v8::Uint32Array>(), accept);
 			} else if (subject->IsInt32Array()) {
 				return immediate(subject.As<v8::Int32Array>(), accept);
+			} else if (subject->IsFloat16Array()) {
+				return immediate(subject.As<v8::Float16Array>(), accept);
 			} else if (subject->IsFloat32Array()) {
 				return immediate(subject.As<v8::Float32Array>(), accept);
 			} else if (subject->IsFloat64Array()) {
@@ -359,15 +418,13 @@ struct visit_value : visit_flat_value<Target> {
 				return immediate(subject.As<v8::BigInt64Array>(), accept);
 			} else if (subject->IsBigUint64Array()) {
 				return immediate(subject.As<v8::BigUint64Array>(), accept);
-			} else if (subject->IsUint8ClampedArray()) {
-				return immediate(subject.As<v8::Uint8ClampedArray>(), accept);
 			} else {
 				throw js::type_error{u"Received exotic v8 'ArrayBufferView'"};
 			}
 		}
 
 		template <class Accept, class Type>
-			requires std::is_base_of_v<array_buffer_view_tag, v8_to_tag<Type>>
+			requires std::is_convertible_v<Type, v8::ArrayBufferView>
 		auto immediate(v8::Local<Type> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return accept(v8_to_tag<Type>{}, *this, value_of{witness(), subject});
 		}
@@ -381,12 +438,12 @@ struct visit_template {
 		explicit visit_template(auto* /*transfer*/) {}
 
 		template <class Accept>
-		auto operator()(v8::Local<v8::FunctionTemplate> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(v8::Local<v8::FunctionTemplate> subject, const Accept& accept) const -> accept_target_t<Accept> {
 			return accept(function_prototype_tag{}, *this, subject);
 		}
 
 		template <class Accept>
-		auto operator()(v8::Local<v8::ObjectTemplate> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(v8::Local<v8::ObjectTemplate> subject, const Accept& accept) const -> accept_target_t<Accept> {
 			return accept(object_prototype_tag{}, *this, subject);
 		}
 
@@ -399,7 +456,7 @@ namespace js {
 
 // Name visitor (string + symbol)
 template <class Meta, class Type>
-	requires std::is_base_of_v<v8::Primitive, Type>
+	requires std::is_convertible_v<Type, v8::Primitive>
 struct visit<Meta, v8::Local<Type>> : iv8::visit_uncached_flat_value_with<Meta> {
 		using iv8::visit_uncached_flat_value_with<Meta>::visit_uncached_flat_value_with;
 };
@@ -412,7 +469,7 @@ struct visit<Meta, v8::Local<Type>> : iv8::visit_value_with<Meta> {
 
 // Template visitor
 template <class Meta, class Type>
-	requires std::is_base_of_v<v8::Template, Type>
+	requires std::is_convertible_v<Type, v8::Template>
 struct visit<Meta, v8::Local<Type>> : iv8::visit_template {
 		using iv8::visit_template::visit_template;
 };
@@ -429,9 +486,15 @@ struct visit<Meta, v8::FunctionCallbackInfo<v8::Value>> : visit<Meta, v8::Local<
 		using visit_type::operator();
 
 		template <class Accept>
-		auto operator()(v8::FunctionCallbackInfo<v8::Value> info, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(const v8::FunctionCallbackInfo<v8::Value>& info, const Accept& accept) -> accept_target_t<Accept> {
 			return accept(vector_tag{}, *this, iv8::callback_info{info});
 		}
+};
+
+// Object key maker for v8 objects
+template <auto Key>
+struct visit_key_literal<Key, v8::Local<v8::Object>> : iv8::visit_v8_key_literal<Key> {
+		using iv8::visit_v8_key_literal<Key>::visit_v8_key_literal;
 };
 
 } // namespace js

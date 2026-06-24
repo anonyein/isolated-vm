@@ -1,4 +1,5 @@
 module;
+#include "napi_js/version.h"
 #include <js_native_api_types.h>
 export module nodejs:js_native_api_types;
 // NOLINTBEGIN(misc-unused-using-decls)
@@ -19,7 +20,6 @@ export using ::napi_finalize;
 export using ::napi_property_descriptor;
 export using ::napi_type_tag;
 export using ::node_api_basic_finalize;
-export using ::node_api_nogc_finalize;
 
 // napi_key_collection_mode
 export using ::napi_key_collection_mode;
@@ -88,6 +88,11 @@ export using ::napi_uint16_array;
 export using ::napi_uint32_array;
 export using ::napi_uint8_array;
 export using ::napi_uint8_clamped_array;
+#if NODE_VERSION_AT_LEAST(25, 5, 0) || NODE_EQ_VERSION_AT_LEAST(24, 13, 1)
+export using ::napi_float16_array;
+#else
+export constexpr auto napi_float16_array = static_cast<napi_typedarray_type>(napi_biguint64_array + 1);
+#endif
 
 // napi_valuetype
 export using ::napi_valuetype;

@@ -105,43 +105,23 @@ auto accept_basic_napi_value::operator()(error_tag /*tag*/, visit_holder visit, 
 // data blocks (array buffer, shared array buffer)
 auto accept_basic_napi_value::operator()(array_buffer_tag /*tag*/, visit_holder /*visit*/, const js::array_buffer& subject) const
 	-> js::referenceable_value<value_of<array_buffer_tag>> {
+	auto view = std::span<const std::byte>{subject};
 	// You could avoid the extra copy for `js::data_block&&` here w/ v8 API. Napi requires the copy
 	// though.
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 	void* bytes;
-	auto* result = napi::invoke(napi_create_arraybuffer, napi_env{*this}, subject.size(), &bytes);
+	auto* result = napi::invoke(napi_create_arraybuffer, napi_env{*this}, view.size(), &bytes);
 	// nb: `std::memcpy` *technically* results in undefined behavior on block size 0
 	// (and also) it maybe causes an infinite loop with musl
 	// https://stackoverflow.com/questions/5243012/is-it-guaranteed-to-be-safe-to-perform-memcpy0-0-0
-	std::ranges::copy(std::span<const std::byte>{subject}, static_cast<std::byte*>(bytes));
+	std::ranges::copy(view, static_cast<std::byte*>(bytes));
 	auto value = value_of<array_buffer_tag>::from(result);
 	return js::referenceable_value{value};
 }
 
 auto accept_basic_napi_value::operator()(shared_array_buffer_tag /*tag*/, visit_holder /*visit*/, js::shared_array_buffer&& subject) const
 	-> js::referenceable_value<value_of<shared_array_buffer_tag>> {
-	auto backing_store = [ & ]() -> auto {
-		auto byte_length = subject.size();
-		// v8 does not call the deleter `byte_length` is zero. So the heap-allocated shared_ptr trick
-		// does not work in that case.
-		if (byte_length == 0) {
-			return v8::SharedArrayBuffer::NewBackingStore(nullptr, 0, nullptr, nullptr);
-		} else {
-			auto holder = std::make_unique<js::shared_array_buffer::shared_pointer_type>(std::move(subject).acquire_ownership());
-			auto backing_store = v8::SharedArrayBuffer::NewBackingStore(
-				holder->get(),
-				byte_length,
-				[](void* /*data*/, std::size_t /*length*/, void* param) -> void {
-					delete static_cast<js::shared_array_buffer::shared_pointer_type*>(param);
-				},
-				holder.get()
-			);
-			std::ignore = holder.release();
-			return backing_store;
-		}
-	}();
-	auto shared_array_buffer = v8::SharedArrayBuffer::New(v8::Isolate::GetCurrent(), std::move(backing_store));
-	auto value = value_of<shared_array_buffer_tag>::from(std::bit_cast<napi_value>(shared_array_buffer));
+	auto value = make_shared_array_buffer(std::move(subject).acquire_ownership(), subject.byte_length());
 	return js::referenceable_value{value};
 }
 

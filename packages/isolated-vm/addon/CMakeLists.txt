@@ -1,8 +1,9 @@
-find_package_from_npm(@auto_js/js)
-find_package_from_npm(@auto_js/utility)
+set(AUTO_JS_PREFIX isolated_)
+find_package_from_npm(@auto_js/js AS @auto_js/${AUTO_JS_PREFIX}js PROPAGATE auto_js)
 
 add_library(isolated_vm OBJECT)
-target_link_libraries(isolated_vm PRIVATE auto_js utility_js)
+set_npm_package_properties(@isolated-vm/experimental auto_js)
+target_link_libraries(isolated_vm PRIVATE ${auto_js} utility_js)
 target_sources(isolated_vm
 	PUBLIC FILE_SET CXX_MODULES FILES
 		_module.cc
@@ -16,16 +17,41 @@ target_sources(isolated_vm
 		support/lock.cc
 		transfer/accept.cc
 		transfer/visit.cc
+		value/array_buffer.cc
+		value/array.cc
+		value/function.cc
+		value/function.h.cc
+		value/object.cc
 		value/primitive.cc
+		value/prototype.cc
+		value/record.cc
 		value/value.cc
+		value/vector.cc
 )
 
-if(NOT EXPORT_IS_EXPORT)
-	execute_process(COMMAND node "${CMAKE_CURRENT_SOURCE_DIR}/find.js" OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE ISOLATED_VM_PATH RESULT_VARIABLE RESULT)
+if(EXPORT_IS_EXPORT)
+	# Activate 'EXPORT' macro
+	target_compile_definitions(isolated_vm PRIVATE EXPORT_IS_EXPORT)
+else()
+	# @isolated-vm/experimental install location (for linking)
+	execute_process(COMMAND node "${CMAKE_CURRENT_SOURCE_DIR}/resolve.js" OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE ISOLATED_VM_PATH RESULT_VARIABLE RESULT)
 	if(NOT RESULT STREQUAL 0)
 		message(FATAL_ERROR "Failed to find isolated-vm")
 	endif()
+	# Host triplet
+	include(TripletUtil)
+	triplet_util(HOST_PLATFORM %p)
 	get_filename_component(ISOLATED_VM_SEARCH "${ISOLATED_VM_PATH}" DIRECTORY)
-	target_link_directories(isolated_vm PUBLIC "${ISOLATED_VM_SEARCH}")
-	target_link_libraries(isolated_vm PRIVATE :backend_napi_v8.node)
+	message(STATUS "Linking isolated-vm from '${ISOLATED_VM_PATH}' [${HOST_PLATFORM}]")
+	if(APPLE)
+		# On macOS [ld64] we link directly to the dylib path
+		target_link_libraries(isolated_vm PRIVATE "${ISOLATED_VM_PATH}")
+	elseif(WIN32)
+		# Windows needs this sidecar lib information
+		target_link_libraries(isolated_vm PRIVATE "${ISOLATED_VM_SEARCH}/backend_napi_v8.${HOST_PLATFORM}.lib")
+	elseif(NOT HOST_PLATFORM MATCHES "musl")
+		# On Linux [ld & lld] you can use this weird '-l:filename.so' syntax
+		target_link_directories(isolated_vm PUBLIC "${ISOLATED_VM_SEARCH}")
+		target_link_libraries(isolated_vm PRIVATE ":backend_napi_v8.${HOST_PLATFORM}.node")
+	endif()
 endif()

@@ -1,6 +1,16 @@
 module;
+// Pull in `V8_EXPORT`
+#include "v8config.h"
+
+// Redefine `V8_EXPORT` with weak attribute
+#if USING_V8_SHARED
+#undef V8_EXPORT
+#include "v8_js/extern.h"
+#endif
+
+// Continue with the rest of the include chain
 #include "v8.h"
-#include "version.h"
+#include "v8_js/version.h"
 #ifdef INCLUDE_V8_PLATFORM
 #include "libplatform/libplatform.h"
 #include "v8-platform.h"
@@ -55,15 +65,22 @@ using v8::DcheckErrorCallback;
 using v8::EntropySource;
 using v8::ReturnAddressLocationResolver;
 using v8::V8;
+#if V8_AT_LEAST(12, 7, 219)
 using v8::V8FatalErrorCallback;
+#endif
 
 // v8-isolate.h
 using v8::Isolate;
+using v8::IsolateGroup;
+using v8::MemoryPressureLevel;
+using v8::ResourceConstraints;
 
 // v8-local-handle.h
+using v8::EscapableHandleScope;
 using v8::HandleScope;
 using v8::Local;
 using v8::MaybeLocal;
+using v8::SealHandleScope;
 
 // v8-locker.h
 using v8::Locker;
@@ -136,25 +153,13 @@ using v8::AccessCheckCallback;
 using v8::ConstructorBehavior;
 using v8::DictionaryTemplate;
 using v8::FunctionTemplate;
-using v8::GenericNamedPropertyDefinerCallback;
-using v8::GenericNamedPropertyDeleterCallback;
-using v8::GenericNamedPropertyDescriptorCallback;
-using v8::GenericNamedPropertyEnumeratorCallback;
-using v8::GenericNamedPropertyQueryCallback;
-using v8::GenericNamedPropertySetterCallback;
-using v8::IndexedPropertyDefinerCallback;
 using v8::IndexedPropertyDefinerCallbackV2;
-using v8::IndexedPropertyDeleterCallback;
 using v8::IndexedPropertyDeleterCallbackV2;
-using v8::IndexedPropertyDescriptorCallback;
 using v8::IndexedPropertyDescriptorCallbackV2;
 using v8::IndexedPropertyEnumeratorCallback;
-using v8::IndexedPropertyGetterCallback;
 using v8::IndexedPropertyGetterCallbackV2;
 using v8::IndexedPropertyHandlerConfiguration;
-using v8::IndexedPropertyQueryCallback;
 using v8::IndexedPropertyQueryCallbackV2;
-using v8::IndexedPropertySetterCallback;
 using v8::IndexedPropertySetterCallbackV2;
 using v8::Intercepted;
 using v8::NamedPropertyDefinerCallback;

@@ -1,5 +1,7 @@
 export module util:utility.string;
+import :type_traits;
 import :utility.constant_wrapper;
+import :utility.sequence;
 import std;
 
 namespace util {
@@ -15,6 +17,24 @@ export template <class Char, std::size_t Size, fixed_value<Char[ Size ]> Value>
 consteval auto make_consteval_string_view(constant_wrapper<Value> /*cw*/) -> std::basic_string_view<Char> {
 	return make_consteval_string_view(constant_wrapper<Value>::value);
 }
+
+// Concatenate a pack of util::cw<"xyz">
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay, cppcoreguidelines-pro-bounds-pointer-arithmetic, modernize-avoid-c-arrays)
+export template <auto... Strings>
+consteval auto consteval_strcat(constant_wrapper<Strings>... /*strings*/) {
+	using char_type = identical_type_t<std::remove_extent_t<typename constant_wrapper<Strings>::value_type>...>;
+	constexpr auto chars = [ & ]() -> auto {
+		constexpr auto size = (... + (std::extent_v<typename constant_wrapper<Strings>::value_type> - 1));
+		std::array<char_type, size + 1> chars{};
+		std::size_t offset = 0;
+		(..., (std::ranges::copy(Strings.value, chars.data() + offset), offset += std::extent_v<typename constant_wrapper<Strings>::value_type> - 1));
+		return chars;
+	}();
+	auto [... indices ] = sequence<chars.size()>;
+	constexpr char_type string[ chars.size() ] = {chars[ indices ]...};
+	return cw<string>;
+}
+// NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay, cppcoreguidelines-pro-bounds-pointer-arithmetic, modernize-avoid-c-arrays)
 
 // Helper for `codepoint_char_sequence` which stores an array of the most characters it will take to
 // represent a codepoint in a given character type.
@@ -233,14 +253,14 @@ class codepoint_forward_view<char16_t> {
 
 		constexpr auto read() -> char32_t {
 			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-			auto char0 = *pos_++;
+			auto char0 = static_cast<char32_t>(*pos_++);
 			if (char0 >= 0xd800 && char0 < 0xdc00) {
 				if (eof()) {
 					// nb: Unpaired surrogate
 					return char0;
 				}
 				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-				auto char1 = *pos_++;
+				auto char1 = static_cast<char32_t>(*pos_++);
 				if (char1 >= 0xdc00 && char1 < 0xe000) {
 					return ((char0 - 0xd800) * 0x400) + (char1 - 0xdc00) + 0x1'0000;
 				} else {

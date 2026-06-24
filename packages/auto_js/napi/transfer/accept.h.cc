@@ -1,5 +1,5 @@
 export module napi_js:accept;
-import :container;
+import :utility;
 import :value;
 import std;
 import util;
@@ -168,15 +168,16 @@ struct accept_napi_value : accept_basic_napi_value {
 		// vectors
 		auto operator()(this const auto& self, vector_tag /*tag*/, auto& visit, auto&& subject)
 			-> js::deferred_receiver<value_of<vector_tag>, decltype(self), decltype(visit), decltype(subject)> {
+			auto [... size ] = util::maybe_range_size(subject, 0);
 			return {
-				value_of<vector_tag>::from(napi::invoke(napi_create_array_with_length, napi_env{self}, subject.size())),
+				value_of<vector_tag>::from(napi::invoke(napi_create_array_with_length, napi_env{self}, size...)),
 				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
 				[](value_of<vector_tag> array, auto& self, auto& visit, auto /*&&*/ subject) -> void {
 					int ii = 0;
 					auto&& range = util::into_range(std::forward<decltype(subject)>(subject));
-					for (auto&& subject : util::forward_range(std::forward<decltype(range)>(range))) {
-						auto* element = napi_value{visit(std::forward<decltype(subject)>(subject), self)};
-						napi::invoke0(napi_set_element, napi_env{self}, napi_value{array}, ii++, element);
+					for (auto&& element : util::forward_range(std::forward<decltype(range)>(range))) {
+						auto* item = napi_value{visit(std::forward<decltype(element)>(element), self)};
+						napi::invoke0(napi_set_element, napi_env{self}, napi_value{array}, ii++, item);
 					}
 				},
 			};

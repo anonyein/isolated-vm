@@ -9,10 +9,15 @@ namespace js::iv8 {
 template <class Tag>
 struct value_specialization;
 
+// nb: This corresponds to `js::napi::bound_value_of<T>`. `v8::Local<T>` is more like
+// `js::napi::value_of<T>`.
 template <class Tag>
 class value_of : public value_specialization<Tag>::type {
 	public:
 		using value_specialization<Tag>::type::type;
+
+		// NOLINTNEXTLINE(google-explicit-constructor)
+		operator v8::Local<tag_to_v8<Tag>>() const { return std::bit_cast<v8::Local<tag_to_v8<Tag>>>(*this); }
 };
 
 template <class Type>
