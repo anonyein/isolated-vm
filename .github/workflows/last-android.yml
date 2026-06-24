@@ -225,7 +225,7 @@ jobs:
           NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"   # [FIX] 由上一步软链接保证此路径存在
 
           # [FIX] gnu++26 降级为 gnu++23，NDK clang 不完整支持 C++26
-          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++23 -fPIC -fvisibility=hidden " \
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
                        f"-isystem /tmp/host-boost-headers " \
                        f"-isystem {SRC_ROOT}/packages/utility/include " \
                        f"-I {NODE_DIR}/src " \
