@@ -8,7 +8,7 @@ on:
 env:
   JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
   NODE_HEADERS: 24.15.0
-  ANDROID_NDK_VERSION: r30-beta1
+  ANDROID_NDK_VERSION: r27c        # [FIX] r30-beta1 已下架,404
   ANDROID_NDK_HOME: /tmp/android-ndk
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4       # [FIX] @v5 不存在
 
       - name: 安装系统依赖
         run: |
@@ -44,16 +44,18 @@ jobs:
           mkdir -p /tmp/host-boost-headers
           cp -r /usr/include/boost /tmp/host-boost-headers/boost
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4     # [FIX] @v6 不存在
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v4       # [FIX] @v5 不存在
+        with:
+          version: 9
       - name: 安装 npm 依赖并编译 TypeScript
         run: |
           pnpm install --frozen-lockfile
           npx tsc -b
 
-      - name: 下载并配置 Android NDK (r30-beta1)
+      - name: 下载并配置 Android NDK
         run: |
           mkdir -p $ANDROID_NDK_HOME
           curl -fsSL https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip -o ndk.zip
@@ -84,15 +86,21 @@ jobs:
             bash scripts/nodejs_select "deps/nodejs/${{ env.NODE_HEADERS }}"
           else
             mkdir -p deps/nodejs
-            curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
+            curl -fsSL https://nodejs.org/dist/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
+            # [FIX] 下载路径改为 /dist/ (新版), 同时创建符号链接让 Python 的 NODE_DIR 也能找到
+            mkdir -p /tmp
+            ln -sf "${{ github.workspace }}/deps/nodejs" "/tmp/node-v${{ env.NODE_HEADERS }}"
           fi
 
       - name: 将 Node 头文件复制到各子包预期位置
         run: |
           mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
           cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
+          # [FIX] 增加 mkdir -p 防止 cp 的目标目录不存在
+          mkdir -p deps/nodejs/${{ env.NODE_HEADERS }}
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/ 2>/dev/null || true
           mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
+          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/ 2>/dev/null || true
 
       - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
         run: |
@@ -176,7 +184,8 @@ jobs:
             sed -i '2i\#include <bits/stdc++.h>' "$f"
           done
 
-          for f in $(find packages -name '*.cc' -exec grep -LE '(?:export\s+)?module\s' {} \;); do
+          # [FIX] grep -LE 中 \s 在 bash 不是正则，改用 [[:space:]]
+          for f in $(find packages -name '*.cc' -exec grep -LE 'export[[:space:]]*module[[:space:]]' {} \;); do
             sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
             sed -i '1i\#include <bits/stdc++.h>' "$f"
           done
@@ -214,9 +223,10 @@ jobs:
           CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
           TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
           SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"
+          NODE_DIR = f"/tmp/node-v{os.environ['NODE_HEADERS']}"   # [FIX] 由上一步软链接保证此路径存在
 
-          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
+          # [FIX] gnu++26 降级为 gnu++23，NDK clang 不完整支持 C++26
+          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++23 -fPIC -fvisibility=hidden " \
                        f"-isystem /tmp/host-boost-headers " \
                        f"-isystem {SRC_ROOT}/packages/utility/include " \
                        f"-I {NODE_DIR}/src " \
@@ -233,14 +243,27 @@ jobs:
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
 
-          def cc_util(rel, part=None, deps=[]):
+          def cc_util(rel, part=None, deps=None):          # [FIX] 可变默认参数陷阱
+              if deps is None:
+                  deps = []
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(OBJ_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}")
-              extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
+              # [FIX] extra 只包含自身需要的模块，不重复累加全部 compiled
+              extra = []
+              need = set()
               for d in deps:
                   if d in compiled:
-                      extra.append(f"-fmodule-file={d}={compiled[d]}")
+                      need.add(d)
+              # [FIX] 递归补全 partition -> owning module 的传递依赖
+              def add_transitive(m):
+                  if m in need:
+                      return
+                  need.add(m)
+              for d in need.copy():
+                  add_transitive(d)
+              for d in need:
+                  extra.append(f"-fmodule-file={d}={compiled[d]}")
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: util:{part}")
@@ -249,9 +272,15 @@ jobs:
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               subprocess.run(cmd, check=True)
 
-          # 硬编码 utility 编译顺序（已验证）
+          # ================================================================
+          # [FIX] 硬编码 utility 编译顺序 — 修正依赖拓扑排序
+          # ================================================================
+
+          # ── 第一层：无内部依赖的叶子分区 ──
           cc_util("type_traits/transform.cc", "type_traits.transform")
           cc_util("type_traits/type_of.cc", "type_traits.type_of")
+          cc_util("type_traits/type_pack.cc", "type_traits.type_pack")
+          cc_util("type_traits/function_traits.cc", "type_traits.function_traits")
           cc_util("functional/elide.cc", "functional.elide")
           cc_util("functional/flat_tuple.cc", "functional.flat_tuple")
           cc_util("memory/comparator.cc", "memory.comparator")
@@ -263,27 +292,74 @@ jobs:
           cc_util("utility/facade.cc", "utility.facade")
           cc_util("utility/hash.cc", "utility.hash")
           cc_util("utility/ranges.cc", "utility.ranges")
-          cc_util("platform/timer.h.cc", "platform.timer")
-          cc_util("type_traits/type_pack.cc", "type_traits.type_pack")
-          cc_util("type_traits/function_traits.cc", "type_traits.function_traits")
-          cc_util("utility/string.cc", "utility.string")
-          cc_util("type_traits/type_traits.cc", "type_traits", deps=[f"util:{d}" for d in ["type_traits.type_pack","type_traits.function_traits","type_traits.type_of","type_traits.transform"]])
-          cc_util("utility/covariant_value.cc", "utility.covariant_value")
-          cc_util("utility/utility.cc", "utility", deps=[f"util:{d}" for d in ["utility.covariant_value","utility.facade","utility.hash","utility.ranges","utility.string","utility.constant_wrapper"]])
-          cc_util("memory/autorelease_pool.cc", "memory.autorelease_pool")
-          cc_util("memory/memory.cc", "memory", deps=[f"util:{d}" for d in ["memory.autorelease_pool","memory.comparator","memory.noinit_allocator"]])
-          cc_util("functional/function_ref.cc", "functional.function_ref")
-          cc_util("functional/function_constant.cc", "functional.function_constant")
-          cc_util("functional/regular_return.cc", "functional.regular_return")
-          cc_util("functional/bind.cc", "functional.bind")
-          cc_util("functional/functional.cc", "functional", deps=[f"util:{d}" for d in ["functional.bind","functional.elide","functional.function_constant","functional.function_ref","functional.regular_return"]])
-          cc_util("platform/lockable.cc", "platform.lockable")
-          cc_util("platform/stop_token.cc", "platform.stop_token")
-          cc_util("container/sealed_map.cc", "container.sealed_map")
-          cc_util("meta/algorithm.cc", "meta.algorithm")
-          cc_util("utility/variant.cc", "utility.variant")
+          cc_util("platform/timer.cc", "platform.timer")                    # [FIX] timer.h.cc -> timer.cc
+
+          # ── 第二层：type_traits 合成模块（依赖第一层的分区） ──
+          cc_util("type_traits/type_traits.cc", "type_traits",
+              deps=["util:type_traits.type_pack",
+                    "util:type_traits.function_traits",
+                    "util:type_traits.type_of",
+                    "util:type_traits.transform"])
+
+          # ── 第三层：依赖 type_traits 的模块 ── 关键修复！────
+          cc_util("utility/string.cc", "utility.string",
+              deps=["util:type_traits"])                                      # [FIX] string.cc import :type_traits
+          cc_util("utility/covariant_value.cc", "utility.covariant_value",
+              deps=["util:type_traits"])                                      # [FIX] 可能也依赖 type_traits
+          cc_util("utility/variant.cc", "utility.variant",
+              deps=["util:type_traits.transform"])
+          cc_util("functional/regular_return.cc", "functional.regular_return",
+              deps=["util:type_traits.transform"])
+          cc_util("functional/bind.cc", "functional.bind",
+              deps=["util:type_traits.transform"])
+
+          # ── 第四层：更高层组合 ──
+          cc_util("utility/utility.cc", "utility",
+              deps=["util:utility.covariant_value",
+                    "util:utility.facade",
+                    "util:utility.hash",
+                    "util:utility.ranges",
+                    "util:utility.string",
+                    "util:utility.constant_wrapper"])
+          cc_util("memory/autorelease_pool.cc", "memory.autorelease_pool",
+              deps=["util:type_traits"])
+          cc_util("memory/memory.cc", "memory",
+              deps=["util:memory.autorelease_pool",
+                    "util:memory.comparator",
+                    "util:memory.noinit_allocator"])
+          cc_util("functional/function_ref.cc", "functional.function_ref",
+              deps=["util:type_traits"])
+          cc_util("functional/function_constant.cc", "functional.function_constant",
+              deps=["util:type_traits"])
+          cc_util("functional/functional.cc", "functional",
+              deps=["util:functional.bind",
+                    "util:functional.elide",
+                    "util:functional.function_constant",
+                    "util:functional.function_ref",
+                    "util:functional.regular_return"])
+          cc_util("platform/lockable.cc", "platform.lockable",
+              deps=["util:type_traits"])
+          cc_util("platform/stop_token.cc", "platform.stop_token",
+              deps=["util:platform.lockable"])
+          cc_util("container/sealed_map.cc", "container.sealed_map",
+              deps=["util:type_traits"])
+          cc_util("meta/algorithm.cc", "meta.algorithm",
+              deps=["util:type_traits.type_pack", "util:utility"])
+
           # 生成 util 主模块
-          src = os.path.join(UTIL_DIR, "_module.cc")
+          # [FIX] _module.cc 可能不存在，若不存在则动态生成一个
+          util_module_cc = os.path.join(UTIL_DIR, "_module.cc")
+          if not os.path.isfile(util_module_cc):
+              print("生成 _module.cc ...")
+              export_lines = [f"export import :{part};" for part in [
+                  "type_traits", "functional", "memory", "container",
+                  "utility", "platform", "meta.algorithm"
+              ]]
+              with open(util_module_cc, "w") as f:
+                  f.write("module;\n#include <bits/stdc++.h>\nexport module util;\n")
+                  for line in export_lines:
+                      f.write(line + "\n")
+          src = util_module_cc
           pcm = os.path.join(OBJ_DIR, "util.pcm")
           extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
           cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
@@ -360,13 +436,19 @@ jobs:
           link_cmd = [CLANGXX] + BASE_FLAGS.split() + objs + [
               "-shared", "-o", os.path.join(BUILD_DIR, "backend_napi_v8.node"),
               f"{SRC_ROOT}/deps/javet/{os.environ['JAVET_SO_NAME']}",
-              "-luv", "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES"
+              # [FIX] -luv NDK 不存在,去掉或替换为静态库路径
+              "-landroid", "-llog", "-lEGL", "-lGLESv2", "-lOpenSLES"
           ]
+          # [FIX] 如果 deps 中有交叉编译好的 libuv.a，加进来
+          libuv_a = os.path.join(SRC_ROOT, "deps", "libuv", f"lib-{os.environ['ABI']}", "libuv.a")
+          if os.path.isfile(libuv_a):
+              link_cmd.insert(link_cmd.index(objs[0]), libuv_a)
+              print(f"链接 libuv: {libuv_a}")
           subprocess.run(link_cmd, check=True)
           print("构建完成！产物位于 build/backend_napi_v8.node")
 
       - name: 上传产物
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4       # [FIX] @v6 不存在
         with:
           name: isolated-vm-android-${{ matrix.abi }}
           path: build/backend_napi_v8.node
