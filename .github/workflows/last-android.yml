@@ -248,33 +248,15 @@ jobs:
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(OBJ_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}")
-              # [FIX] 把 deps 中指定的模块加入 extra，
-              #       同时补全: C++20 partition 的依赖需要传 owning module 的所有已编译 partition
-              extra = []
-              for d in deps:
-                  if d in compiled:
-                      extra.append(f"-fmodule-file={d}={compiled[d]}")
-              # [FIX] 对于 partition 依赖(如 import :type_traits.type_of)，
-              #       编译器还需要知道同 partition family 里其他已编译分区的位置
-              #       收集 deps 中每个模块的同 owner 的所有已知 partition
-              owners_needed = set()
-              for d in deps:
-                  if ":" in d:
-                      owners_needed.add(d.split(":")[0])        # e.g. "util" from "util:type_traits.type_of"
-              for name, path in compiled.items():
-                  if name in deps:
-                      continue
-                  if ":" in name:
-                      owner = name.split(":")[0]
-                      if owner in owners_needed:
-                          extra.append(f"-fmodule-file={name}={path}")
-              # 去重
-              extra = list(dict.fromkeys(extra))
+              # [FIX] 每次都把所有已编译模块传给编译器，保证 import 一定能找到
+              extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: util:{part}")
                   subprocess.run(cmd, check=True)
                   compiled[f"util:{part}"] = pcm
+              # 编译 obj 时重新生成 extra，包含刚编译完的自身
+              extra = [f"-fmodule-file={name}={path}" for name, path in compiled.items()]
               cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
               subprocess.run(cmd, check=True)
 
