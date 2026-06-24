@@ -242,27 +242,34 @@ jobs:
 
           UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
 
-          def cc_util(rel, part=None, deps=None):          # [FIX] 可变默认参数陷阱
+          def cc_util(rel, part=None, deps=None):
               if deps is None:
                   deps = []
               src = os.path.join(UTIL_DIR, rel)
               pcm = os.path.join(OBJ_DIR, f"util-{part}.pcm") if part else None
               obj = os.path.join(OBJ_DIR, f"util_{os.path.relpath(src, UTIL_DIR).replace('/', '_')}")
-              # [FIX] extra 只包含自身需要的模块，不重复累加全部 compiled
+              # [FIX] 把 deps 中指定的模块加入 extra，
+              #       同时补全: C++20 partition 的依赖需要传 owning module 的所有已编译 partition
               extra = []
-              need = set()
               for d in deps:
                   if d in compiled:
-                      need.add(d)
-              # [FIX] 递归补全 partition -> owning module 的传递依赖
-              def add_transitive(m):
-                  if m in need:
-                      return
-                  need.add(m)
-              for d in need.copy():
-                  add_transitive(d)
-              for d in need:
-                  extra.append(f"-fmodule-file={d}={compiled[d]}")
+                      extra.append(f"-fmodule-file={d}={compiled[d]}")
+              # [FIX] 对于 partition 依赖(如 import :type_traits.type_of)，
+              #       编译器还需要知道同 partition family 里其他已编译分区的位置
+              #       收集 deps 中每个模块的同 owner 的所有已知 partition
+              owners_needed = set()
+              for d in deps:
+                  if ":" in d:
+                      owners_needed.add(d.split(":")[0])        # e.g. "util" from "util:type_traits.type_of"
+              for name, path in compiled.items():
+                  if name in deps:
+                      continue
+                  if ":" in name:
+                      owner = name.split(":")[0]
+                      if owner in owners_needed:
+                          extra.append(f"-fmodule-file={name}={path}")
+              # 去重
+              extra = list(dict.fromkeys(extra))
               if pcm:
                   cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
                   print(f"PCM: util:{part}")
