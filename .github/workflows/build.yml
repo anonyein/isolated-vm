@@ -9,7 +9,7 @@ jobs:
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        node: [ 22, 24 ]
+        node: [ 24, 26 ]
       fail-fast: false
     steps:
       - uses: actions/checkout@v6
@@ -36,11 +36,14 @@ jobs:
           command: |
             npm test
 
+      # Console on failure
+      - uses: laverdet/console@v1
+        if: failure()
   build-and-test-alpine:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [ 22, 24 ]
+        node: [ 24, 26 ]
       fail-fast: false
     container: node:${{ matrix.node }}-alpine
     steps:

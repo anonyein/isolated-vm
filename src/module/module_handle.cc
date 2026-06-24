@@ -3,6 +3,7 @@
 #include "reference_handle.h"
 #include "transferable.h"
 #include "isolate/class_handle.h"
+#include "isolate/functor_runners.h"
 #include "isolate/run_with_timeout.h"
 #include "isolate/three_phase_task.h"
 
@@ -32,11 +33,14 @@ ModuleInfo::ModuleInfo(Local<Module> handle) : identity_hash{handle->GetIdentity
 	IsolateEnvironment::GetCurrent().module_handles.emplace(identity_hash, this);
 	// Grab all dependency specifiers
 	Isolate* isolate = Isolate::GetCurrent();
-	auto context = isolate->GetCurrentContext();
 	auto& requests = **handle->GetModuleRequests();
 	dependency_specifiers.reserve(requests.Length());
 	for (int ii = 0; ii < requests.Length(); ii++) {
-		auto request = requests.Get(context, ii).As<ModuleRequest>();
+#if V8_AT_LEAST(14, 0, 0)
+		auto request = requests.Get(ii).As<ModuleRequest>();
+#else
+		auto request = requests.Get(isolate->GetCurrentContext(), ii).As<ModuleRequest>();
+#endif
 		dependency_specifiers.emplace_back(*String::Utf8Value{isolate, request->GetSpecifier()});
 	}
 }
@@ -403,13 +407,29 @@ class ModuleLinkerAsync : public ModuleLinker::Implementation {
 
 		using ModuleLinker::Implementation::Implementation;
 		auto Begin(ModuleHandle& module, RemoteHandle<Context> context) -> Local<Value> final {
-			GetLinker().Link(&module);
+			auto promise = async_handles.Deref<0>()->GetPromise();
+			bool failed = false;
+			FunctorRunners::RunCatchValue(
+				[&]() {
+					GetLinker().Link(&module);
+				},
+				[&](Local<Value> error) {
+					// The resolve callback threw synchronously. Reject the returned promise (mirroring the
+					// rejected-promise path in ModuleRejected), then Reset() -- which destroys this impl, so
+					// it must come last and nothing below may touch members.
+					Unmaybe(async_handles.Deref<0>()->Reject(Isolate::GetCurrent()->GetCurrentContext(), error));
+					GetLinker().Reset();
+					failed = true;
+				});
+			if (failed) {
+				return promise;
+			}
 			info = module.GetInfo();
 			this->context = std::move(context);
 			if (pending == 0) {
 				Instantiate();
 			}
-			return async_handles.Deref<0>()->GetPromise();
+			return promise;
 		}
 };
 
