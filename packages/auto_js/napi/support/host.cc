@@ -104,7 +104,11 @@ auto v8_is_string_one_byte(value_of<string_tag> value) -> std::optional<bool> {
 }
 
 auto node_api_maybe_is_shared_array_buffer(napi_env env, value_of<object_tag> value) -> std::optional<bool> {
-	return napi::invoke(node_api_is_sharedarraybuffer, env, value);
+	if constexpr (node_api_has_sharedarraybuffer) {
+		return napi::invoke(node_api_is_sharedarraybuffer, env, value);
+	} else {
+		return std::nullopt;
+	}
 }
 
 auto bun_maybe_is_shared_array_buffer(napi_env env, value_of<object_tag> value) -> std::optional<bool> {
