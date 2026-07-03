@@ -87,7 +87,7 @@ auto realm_handle::instantiate_runtime(environment& env) -> forward_promise_type
 	return js::forward{promise};
 }
 
-auto realm_handle::class_template(environment& env) -> js::napi::value_of<class_tag_of<realm_handle>> {
+auto realm_handle::class_template(environment& env) -> js::napi::local_of<class_tag_of<realm_handle>> {
 	return env.class_template(
 		std::type_identity<realm_handle>{},
 		js::class_template{

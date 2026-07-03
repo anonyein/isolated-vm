@@ -83,7 +83,7 @@ auto script_handle::run(environment& env, realm_handle* realm, run_script_option
 	return js::forward{promise};
 }
 
-auto script_handle::class_template(environment& env) -> js::napi::value_of<class_tag_of<script_handle>> {
+auto script_handle::class_template(environment& env) -> js::napi::local_of<class_tag_of<script_handle>> {
 	return env.class_template(
 		std::type_identity<script_handle>{},
 		js::class_template{

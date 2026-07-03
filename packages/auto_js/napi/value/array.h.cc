@@ -5,11 +5,11 @@ import util;
 
 namespace js::napi {
 
-class bound_value_for_vector : public bound_value_next<vector_tag> {
+class value_for_vector : public value_next<vector_tag> {
 	public:
 		class iterator;
-		using bound_value_next<vector_tag>::bound_value_next;
-		using value_type = value_of<value_tag>;
+		using value_next<vector_tag>::value_next;
+		using value_type = local_of<value_tag>;
 
 		[[nodiscard]] auto begin() const -> iterator;
 		[[nodiscard]] auto end() const -> iterator;
@@ -19,15 +19,15 @@ class bound_value_for_vector : public bound_value_next<vector_tag> {
 		mutable std::uint32_t size_{};
 };
 
-class bound_value_for_vector::iterator : public util::random_access_iterator_facade<std::int32_t, std::int64_t> {
+class value_for_vector::iterator : public util::random_access_iterator_facade<std::int32_t, std::int64_t> {
 	public:
 		using arithmetic_facade::operator+;
 		using difference_type = arithmetic_facade::difference_type;
 		using size_type = std::uint32_t;
-		using value_type = bound_value_for_vector::value_type;
+		using value_type = value_for_vector::value_type;
 
 		iterator() = default;
-		iterator(bound_value_for_vector subject, size_type index);
+		iterator(value_for_vector subject, size_type index);
 
 		auto operator*() const -> value_type;
 
@@ -42,7 +42,7 @@ class bound_value_for_vector::iterator : public util::random_access_iterator_fac
 	private:
 		auto operator+() const -> size_type { return index_; }
 
-		bound_value_for_vector subject_;
+		value_for_vector subject_;
 		size_type index_{};
 };
 

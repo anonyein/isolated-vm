@@ -23,27 +23,27 @@ auto fast_is_object(napi_value value) -> bool;
 auto fast_is_string(napi_value value) -> bool;
 
 // Bug fixes
-auto (*is_object_array_buffer)(napi_env env, value_of<object_tag> value) -> bool = nullptr;
-auto (*is_data_block_array_buffer)(napi_env env, value_of<data_block_tag> value) -> bool = nullptr;
+auto (*is_object_array_buffer)(napi_env env, local_of<object_tag> value) -> bool = nullptr;
+auto (*is_data_block_array_buffer)(napi_env env, local_of<data_block_tag> value) -> bool = nullptr;
 
 // Optional value inspectors. int32 & latin1 will select optimized representations, and
 // shared_array_buffer is required for support of that value type.
-auto (*maybe_is_number_int32)(value_of<number_tag> value) -> std::optional<bool> = nullptr;
-auto (*maybe_is_string_latin1)(value_of<string_tag> value) -> std::optional<bool> = nullptr;
-auto (*maybe_is_shared_array_buffer)(napi_env env, value_of<object_tag> value) -> std::optional<bool> = nullptr;
+auto (*maybe_is_number_int32)(local_of<number_tag> value) -> std::optional<bool> = nullptr;
+auto (*maybe_is_string_latin1)(local_of<string_tag> value) -> std::optional<bool> = nullptr;
+auto (*maybe_is_shared_array_buffer)(napi_env env, local_of<object_tag> value) -> std::optional<bool> = nullptr;
 
 // 'SharedArrayBuffer' functions
-auto (*make_shared_array_buffer)(js::shared_array_buffer::shared_pointer_type data, std::size_t byte_length) -> value_of<shared_array_buffer_tag> = nullptr;
-auto (*shared_array_buffer_get_byte_length)(value_of<shared_array_buffer_tag> buffer) -> std::size_t = nullptr;
+auto (*make_shared_array_buffer)(js::shared_array_buffer::shared_pointer_type data, std::size_t byte_length) -> local_of<shared_array_buffer_tag> = nullptr;
+auto (*shared_array_buffer_get_byte_length)(local_of<shared_array_buffer_tag> buffer) -> std::size_t = nullptr;
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-auto (*shared_array_buffer_get_backing_store)(value_of<shared_array_buffer_tag> buffer) -> std::shared_ptr<std::byte[]> = nullptr;
+auto (*shared_array_buffer_get_backing_store)(local_of<shared_array_buffer_tag> buffer) -> std::shared_ptr<std::byte[]> = nullptr;
 
 // 'ArrayBufferView' constructors
-auto (*make_sab_data_view)(value_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<data_view_tag> = nullptr;
+auto (*make_sab_data_view)(local_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<data_view_tag> = nullptr;
 
 template <class Type>
 using make_sab_typed_array_constructor =
-	auto(value_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<typed_array_tag_of<Type>>;
+	auto(local_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<typed_array_tag_of<Type>>;
 
 template <class Type>
 make_sab_typed_array_constructor<Type>* make_sab_typed_array_of;

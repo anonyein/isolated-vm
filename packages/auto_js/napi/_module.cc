@@ -1,7 +1,6 @@
 export module napi_js;
 export import :accept;
 export import :api;
-export import :bound_value;
 export import :callback;
 export import :class_definitions;
 export import :class_template_storage;
@@ -16,5 +15,6 @@ export import :remote;
 export import :string_table;
 export import :utility;
 export import :value_handle;
+export import :value_of;
 export import :value;
 export import :visit;

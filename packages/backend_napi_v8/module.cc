@@ -28,7 +28,7 @@ auto module_handle::compile(
 		[](environment& env, expected_type result) -> auto {
 			return completion_record{result.transform([ & ](value_type& module_data) -> auto {
 				auto& [ module_, specifier, requests ] = module_data;
-				auto class_template = js::napi::value_of<class_tag_of<module_handle>>::from(env.module_class());
+				auto class_template = js::napi::local_of<class_tag_of<module_handle>>::from(env.module_class());
 				return js::forward{class_template.runtime_construct(
 					env,
 					std::tuple{std::move(module_)},
@@ -69,7 +69,7 @@ auto module_handle::compile(
 auto module_handle::create_capability(
 	environment& env,
 	realm_handle& realm,
-	js::napi::value_of<js::function_tag> make_capability,
+	js::napi::local_of<js::function_tag> make_capability,
 	create_capability_options options
 ) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(
@@ -309,7 +309,7 @@ auto module_handle::link(environment& env, realm_handle* realm, module_handle_li
 	return js::forward{promise};
 }
 
-auto module_handle::class_template(environment& env) -> js::napi::value_of<class_tag_of<module_handle>> {
+auto module_handle::class_template(environment& env) -> js::napi::local_of<class_tag_of<module_handle>> {
 	return env.class_template(
 		std::type_identity<module_handle>{},
 		js::class_template{
@@ -333,7 +333,7 @@ auto subscriber_capability::take_subscriber() -> std::shared_ptr<subscriber> {
 	}
 }
 
-auto subscriber_capability::send(environment& env, js::forward<napi::value_of<>> message_local) -> bool {
+auto subscriber_capability::send(environment& env, js::forward<napi::local_of<>> message_local) -> bool {
 	auto message = js::transfer_out<js::value_t>(*message_local, env);
 	auto lock = callback_.read();
 	if (*lock) {
@@ -343,13 +343,13 @@ auto subscriber_capability::send(environment& env, js::forward<napi::value_of<>>
 	}
 }
 
-auto subscriber_capability::make(environment& env) -> js::napi::value_of<js::object_tag> {
+auto subscriber_capability::make(environment& env) -> js::napi::local_of<js::object_tag> {
 	auto capability = std::make_shared<subscriber_capability>(private_constructor{});
 	capability->subscriber_ = std::make_shared<subscriber>(capability);
 	return class_template(env).transfer_construct(env, std::move(capability), std::tuple{});
 }
 
-auto subscriber_capability::class_template(environment& env) -> js::napi::value_of<js::class_tag_of<subscriber_capability>> {
+auto subscriber_capability::class_template(environment& env) -> js::napi::local_of<js::class_tag_of<subscriber_capability>> {
 	return env.class_template(
 		std::type_identity<subscriber_capability>{},
 		js::class_template{

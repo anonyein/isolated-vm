@@ -12,7 +12,7 @@ auto agent_handle_value::create(environment& env, std::optional<create_options> 
 	auto options = std::move(options_optional).value_or(create_options{});
 	auto& cluster = env.cluster();
 	auto [ promise, resolver ] = make_promise(env, [](environment& env, agent_handle agent) -> auto {
-		auto class_template = js::napi::value_of<class_tag_of<agent_handle_value>>::from(env.agent_class());
+		auto class_template = js::napi::local_of<class_tag_of<agent_handle_value>>::from(env.agent_class());
 		return js::forward{class_template.construct(env, std::move(agent))};
 	});
 	auto memory_policy_ = [ & ] -> memory_policy::covariant {
@@ -90,7 +90,7 @@ auto agent_handle_value::dispose_async(environment& env) -> forward_promise_type
 	return js::forward{promise};
 }
 
-auto agent_handle_value::class_template(environment& env) -> js::napi::value_of<class_tag_of<agent_handle_value>> {
+auto agent_handle_value::class_template(environment& env) -> js::napi::local_of<class_tag_of<agent_handle_value>> {
 	return env.class_template(
 		std::type_identity<agent_handle_value>{},
 		js::class_template{

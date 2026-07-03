@@ -5,22 +5,22 @@ import std;
 
 namespace js::napi {
 
-class bound_value_for_record : public bound_value_next<record_tag> {
+class value_for_record : public value_next<record_tag> {
 	public:
-		using bound_value_next<record_tag>::bound_value_next;
-		using keys_type = bound_value<vector_tag>;
-		using key_type = value_of<primitive_tag>;
-		using mapped_type = value_of<value_tag>;
+		using value_next<record_tag>::value_next;
+		using keys_type = value_of<vector_tag>;
+		using key_type = local_of<primitive_tag>;
+		using mapped_type = local_of<value_tag>;
 		using value_type = std::pair<key_type, mapped_type>;
 
 	private:
 		class iterator_transform {
 			public:
-				explicit iterator_transform(const bound_value_for_record& subject_);
-				auto operator()(value_of<value_tag> key) const -> value_type;
+				explicit iterator_transform(const value_for_record& subject_);
+				auto operator()(local_of<value_tag> key) const -> value_type;
 
 			private:
-				const bound_value_for_record* subject_;
+				const value_for_record* subject_;
 		};
 
 	public:

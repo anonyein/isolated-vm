@@ -38,7 +38,7 @@ target_sources(${napi_js}
 		api/uv_dlib.h.cc
 		api/uv_handle.cc
 		api/uv_scheduler.h.cc
-		handle/bound_value.cc
+		handle/local.cc
 		handle/reference.cc
 		handle/remote.cc
 		handle/types.cc

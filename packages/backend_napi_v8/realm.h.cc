@@ -22,7 +22,7 @@ export class realm_handle {
 		auto create_capability(environment& env, forward_callback_type make_capability, create_capability_options options) -> forward_promise_type;
 
 		static auto create(environment& env, agent_handle& agent) -> forward_promise_type;
-		static auto class_template(environment& env) -> js::napi::value_of<class_tag_of<realm_handle>>;
+		static auto class_template(environment& env) -> js::napi::local_of<class_tag_of<realm_handle>>;
 
 	private:
 		agent_handle agent_;

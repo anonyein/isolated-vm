@@ -1,55 +1,47 @@
-export module napi_js:value_handle;
+export module napi_js:value_of;
 import :handle.types;
-import auto_js;
 import nodejs;
-import std;
 
 namespace js::napi {
-
-// Heirarchy:
-// value_of<object_tag> ->
-// value_for_object ->
-// value_next<object_tag> ->
-// value_of<value_tag> -> ...
 
 // Details applied to each level of the `value_of<T>` hierarchy.
 template <class Tag>
 class value_next : public value_of<typename Tag::tag_type> {
 	public:
+		using tag_type = Tag;
 		using value_of<typename Tag::tag_type>::value_of;
+		value_next() = default;
+		value_next(napi_env env, local_of<Tag> value) :
+				value_of<typename Tag::tag_type>{env, napi_value{value}} {}
 
-		// "Downcast" to a more specific tag. Potentially unsafe.
-		template <std::convertible_to<Tag> To>
-		auto cast(To /*tag*/) const -> value_of<To> { return value_of<To>::from(*this); }
-
-		// Construct from any `napi_value`. Potentially unsafe.
-		static auto from(napi_value value_) -> value_of<Tag> { return std::bit_cast<value_of<Tag>>(value_); }
+		// NOLINTNEXTLINE(google-explicit-constructor)
+		operator local_of<Tag>() const { return local_of<Tag>::from(napi_value{*this}); }
 };
 
-// Deduction guide for `value_of{bound_value}`
-template <class Type>
-	requires requires { typename Type::tag_type; }
-value_of(Type value) -> value_of<typename Type::tag_type>;
-
-// Tagged napi_value
-export template <class Tag>
+// Member & method implementation for stateful objects. Used internally in visitors. I think it
+// might make sense to have the environment specified by a template parameter. Then you would use
+// `value_of<T>` or something instead of passing the environment to each `local_of<T>` method.
+template <class Tag>
 class value_of : public value_specialization<Tag>::value_type {
 	public:
 		using value_specialization<Tag>::value_type::value_type;
 };
 
-// Sentinel instantiation
+template <class Tag>
+value_of(auto, local_of<Tag>) -> value_of<Tag>;
+
 template <>
 class value_of<void> : public value_handle {
-	public:
-		using value_handle::value_handle;
+	protected:
+		value_of() = default;
+		value_of(napi_env env, napi_value value) :
+				value_handle{value},
+				env_{env} {}
+
+		[[nodiscard]] auto env() const -> napi_env { return env_; }
+
+	private:
+		napi_env env_{};
 };
 
 } // namespace js::napi
-
-// Specialize for `js::forward`. Makes `js::forward{value_of<Tag>}` infer
-// `js::forward<Tag, ...>`.
-namespace js {
-template <class Tag>
-struct forward_tag_for<napi::value_of<Tag>> : std::type_identity<Tag> {};
-} // namespace js

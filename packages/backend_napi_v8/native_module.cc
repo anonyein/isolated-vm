@@ -66,7 +66,7 @@ auto native_module_handle::instantiate(environment& env, realm_handle* realm) ->
 	return js::forward{promise};
 }
 
-auto native_module_handle::class_template(environment& env) -> js::napi::value_of<js::class_tag_of<native_module_handle>> {
+auto native_module_handle::class_template(environment& env) -> js::napi::local_of<js::class_tag_of<native_module_handle>> {
 	return env.class_template(
 		std::type_identity<native_module_handle>{},
 		js::class_template{
