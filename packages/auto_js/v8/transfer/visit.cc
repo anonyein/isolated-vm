@@ -380,7 +380,7 @@ struct visit_value : visit_flat_value<Target> {
 		template <class Accept>
 		auto immediate(v8::Local<v8::Array> subject, const Accept& accept) -> accept_target_t<Accept> {
 			auto visit_entry = visit_entry_pair<visit_property_name<visit_value>, visit_value&>{*this};
-			return accept(list_tag{}, visit_entry, value_of{witness(), subject.As<v8::Object>()});
+			return accept(list_tag{}, visit_entry, value_of{witness(), subject.As<v8::Array>()});
 		}
 
 		// function template
@@ -433,6 +433,40 @@ struct visit_value : visit_flat_value<Target> {
 		v8::Local<v8::Context> context_;
 };
 
+// Forward `value_of<T>` back to acceptor
+template <class Tag>
+struct visit_v8_value_of {
+	private:
+		using visit_type = visit_value<void>;
+
+	public:
+		constexpr explicit visit_v8_value_of(auto* transfer, context_lock_witness lock) : visit_{transfer, lock} {}
+
+		template <class Accept>
+		constexpr auto operator()(value_of<Tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			return accept(Tag{}, visit_, subject);
+		}
+
+		template <class Accept>
+			requires std::is_same_v<Tag, object_tag>
+		constexpr auto operator()(value_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			auto visit_entry = visit_entry_pair<visit_property_name<visit_type>, visit_type&>{visit_};
+			return accept(object_tag{}, visit_entry, subject);
+		}
+
+		template <class Accept>
+			requires std::is_same_v<Tag, list_tag>
+		constexpr auto operator()(value_of<list_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			auto visit_entry = visit_entry_pair<visit_property_name<visit_type>, visit_type&>{visit_};
+			return accept(list_tag{}, visit_entry, subject);
+		}
+
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+
+	private:
+		visit_type visit_;
+};
+
 // Template visitor needs no lock. The acceptor will instantiate values.
 struct visit_template {
 		explicit visit_template(auto* /*transfer*/) {}
@@ -466,6 +500,15 @@ template <class Meta, class Type>
 struct visit<Meta, v8::Local<Type>> : iv8::visit_value_with<Meta> {
 		using iv8::visit_value_with<Meta>::visit_value_with;
 };
+
+// value_of<T> visitor
+template <class Meta, class Tag>
+struct visit<Meta, iv8::value_of<Tag>> : iv8::visit_v8_value_of<Tag> {
+		using iv8::visit_v8_value_of<Tag>::visit_v8_value_of;
+};
+
+template <class Tag>
+struct visit_subject_for<iv8::value_of<Tag>> : std::type_identity<v8::Local<v8::Value>> {};
 
 // Template visitor
 template <class Meta, class Type>
