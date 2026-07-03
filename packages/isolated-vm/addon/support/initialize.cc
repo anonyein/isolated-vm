@@ -9,7 +9,7 @@ import util;
 namespace isolated_vm {
 export namespace detail {
 using make_addon_names = auto() -> std::vector<std::u16string>;
-using accept_addon_values = auto(std::span<value_of<prototype_tag>>) -> void;
+using accept_addon_values = auto(std::span<local_of<prototype_tag>>) -> void;
 using initialize_addon = auto(const basic_lock&, util::function_ref<accept_addon_values>) -> void;
 } // namespace detail
 
@@ -67,7 +67,7 @@ addon::addon(std::type_identity<Type> /*environment*/, auto callback) {
 	constexpr auto make_exports = [](const basic_lock& lock, util::function_ref<detail::accept_addon_values> make) -> void {
 		constexpr auto values = get_descriptors(std::integral_constant<std::size_t, 1>{}, callback_type{}());
 		constexpr auto size = std::tuple_size_v<decltype(values)>;
-		auto vm_values = js::transfer_in_strict<std::array<value_of<prototype_tag>, size>>(values, lock);
+		auto vm_values = js::transfer_in_strict<std::array<local_of<prototype_tag>, size>>(values, lock);
 		make(std::span{vm_values});
 	};
 	register_addon(make_names, make_exports);

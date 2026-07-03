@@ -10,7 +10,7 @@ import util;
 namespace isolated_vm {
 using namespace js;
 
-using runtime_callback_type = auto (*)(const runtime_lock&, callback_info, const void*) -> value_of<>;
+using runtime_callback_type = auto (*)(const runtime_lock&, callback_info, const void*) -> local_of<>;
 using runtime_callback_finalizer_type = auto (*)(void*) -> void;
 
 using runtime_callback_data_span_type = std::span<std::byte>;
@@ -42,7 +42,7 @@ const auto max_callback_storage_size = sizeof(runtime_callback_function_storage<
 auto make_callback_storage(std::invocable<const runtime_lock&, callback_info> auto function) {
 	using function_type = decltype(function);
 	using data_type = runtime_callback_function_storage<function_type>;
-	constexpr auto callback = runtime_callback_type{[](const runtime_lock& lock, callback_info info, const void* data) -> value_of<> {
+	constexpr auto callback = runtime_callback_type{[](const runtime_lock& lock, callback_info info, const void* data) -> local_of<> {
 		const auto& storage = *static_cast<const data_type*>(data);
 		return storage.function(lock, info);
 	}};

@@ -15,7 +15,7 @@ constexpr auto make_free_function(auto function) {
 		) -> auto {
 		using callback_type = decltype(callback);
 		auto bound_function = util::bind{
-			[](const callback_type& callback, Lock lock, callback_info info) noexcept(Nx) -> value_of<> {
+			[](const callback_type& callback, Lock lock, callback_info info) noexcept(Nx) -> local_of<> {
 				auto run = util::regular_return{[ & ]() -> decltype(auto) {
 					return std::apply(
 						callback,
@@ -25,7 +25,7 @@ constexpr auto make_free_function(auto function) {
 						)
 					);
 				}};
-				return js::transfer_in_strict<value_of<>>(run().value_or(std::monostate{}), lock);
+				return js::transfer_in_strict<local_of<>>(run().value_or(std::monostate{}), lock);
 			},
 			std::move(callback),
 		};

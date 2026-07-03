@@ -6,10 +6,10 @@ import :value.primitive;
 namespace isolated_vm {
 using namespace js;
 
-// value_of<object_tag>
-class EXPORT value_for_object : public value_next<object_tag> {
+// local_of<object_tag>
+class EXPORT local_for_object : public local_next<object_tag> {
 	public:
-		using value_next<object_tag>::value_next;
+		using local_next<object_tag>::local_next;
 		[[nodiscard]] auto inspect() const -> value_typeof;
 };
 

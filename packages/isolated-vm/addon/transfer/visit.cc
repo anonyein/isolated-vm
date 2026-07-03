@@ -47,13 +47,13 @@ struct visit_vm_property_key {
 		explicit visit_vm_property_key(Visit& visit) : visit_{visit} {}
 
 		template <class Accept>
-		auto operator()(value_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			auto accept_as = [ & ]<class Tag>(Tag tag) -> auto {
-				auto value = bound_value{lock(), value_of<Tag>::from(subject)};
+				auto value = value_of{lock(), local_of<Tag>::from(subject)};
 				return accept(tag, *this, value);
 			};
 			if (subject.is_string()) {
-				if (value_of<string_tag>::from(subject).is_latin1()) {
+				if (local_of<string_tag>::from(subject).is_latin1()) {
 					return accept_as(string_tag_of<char>{});
 				} else {
 					return accept_as(string_tag_of<char16_t>{});
@@ -75,16 +75,16 @@ template <auto Key>
 struct visit_vm_key_literal {
 		explicit constexpr visit_vm_key_literal(auto* /*transfer*/) {}
 
-		auto operator()(const auto& /*anything*/, const auto& accept_or_visit) -> value_of<name_tag> {
+		auto operator()(const auto& /*anything*/, const auto& accept_or_visit) -> local_of<name_tag> {
 			if (!local_key_) {
 				constexpr auto key = util::make_consteval_string_view(Key);
-				local_key_ = transfer_in<value_of<name_tag>>(key, accept_or_visit.lock());
+				local_key_ = transfer_in<local_of<name_tag>>(key, accept_or_visit.lock());
 			}
 			return local_key_;
 		}
 
 	private:
-		value_of<name_tag> local_key_;
+		local_of<name_tag> local_key_;
 };
 
 struct visit_vm_value {
@@ -92,7 +92,7 @@ struct visit_vm_value {
 		explicit visit_vm_value(const runtime_lock& lock) : lock_{lock} {}
 
 		template <class Accept>
-		auto operator()(value_of<> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<> subject, const Accept& accept) -> accept_target_t<Accept> {
 			// TODO: reference map
 			return util::template_traverse(
 				accept_tags_of_v<Accept>,
@@ -134,9 +134,9 @@ struct visit_vm_value {
 						auto type = subject.inspect();
 						const auto [... primitive_types ] = primitive_typeofs;
 						if ((... || (type == primitive_types))) {
-							return inspected(type, value_of<primitive_tag>::from(subject), accept);
+							return inspected(type, local_of<primitive_tag>::from(subject), accept);
 						} else {
-							return inspected(type, value_of<object_tag>::from(subject), accept);
+							return inspected(type, local_of<object_tag>::from(subject), accept);
 						}
 					},
 				}
@@ -144,12 +144,12 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		auto operator()(value_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return inspected(subject.inspect(), subject, accept);
 		}
 
 		template <class Accept>
-		auto operator()(value_of<number_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<number_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			switch (subject.inspect()) {
 				case value_typeof::number: return accept_as(number_tag{}, subject, accept);
 				case value_typeof::number_i32: return accept_as(number_tag_of<std::int32_t>{}, subject, accept);
@@ -158,7 +158,7 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		auto operator()(value_of<string_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<string_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			switch (subject.inspect()) {
 				case value_typeof::string: return accept_as(string_tag_of<char16_t>{}, subject, accept);
 				case value_typeof::string_latin1: return accept_as(string_tag_of<char>{}, subject, accept);
@@ -167,7 +167,7 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		auto operator()(value_of<bigint_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<bigint_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			switch (subject.inspect()) {
 				case value_typeof::bigint: return accept_as(bigint_tag{}, subject, accept);
 				case value_typeof::bigint_i64: return accept_as(bigint_tag_of<std::int64_t>{}, subject, accept);
@@ -176,17 +176,17 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		auto operator()(value_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return inspected(subject.inspect(), subject, accept);
 		}
 
 		template <class Accept>
-		auto operator()(value_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return inspected(subject.inspect(), subject, accept);
 		}
 
 		template <class Accept>
-		auto operator()(value_of<array_buffer_view_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		auto operator()(local_of<array_buffer_view_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			return inspected(subject.inspect(), subject, accept);
 		}
 
@@ -195,7 +195,7 @@ struct visit_vm_value {
 
 	private:
 		template <class Accept>
-		constexpr auto inspected(value_typeof type_of, value_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		constexpr auto inspected(value_typeof type_of, local_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			switch (type_of) {
 				case value_typeof::undefined: return accept_as(undefined_tag{}, subject, accept);
 				case value_typeof::null: return accept_as(null_tag{}, subject, accept);
@@ -212,13 +212,13 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		constexpr auto inspected(value_typeof type_of, value_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		constexpr auto inspected(value_typeof type_of, local_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			const auto [... data_block_types ] = data_block_typeofs;
 			const auto [... array_buffer_view_types ] = array_buffer_view_typeofs;
 			if ((... || (type_of == data_block_types))) {
-				return inspected(type_of, value_of<data_block_tag>::from(subject), accept);
+				return inspected(type_of, local_of<data_block_tag>::from(subject), accept);
 			} else if ((... || (type_of == array_buffer_view_types))) {
-				return inspected(type_of, value_of<array_buffer_view_tag>::from(subject), accept);
+				return inspected(type_of, local_of<array_buffer_view_tag>::from(subject), accept);
 			} else {
 				switch (type_of) {
 					case value_typeof::external: return accept_as(external_tag{}, subject, accept);
@@ -228,12 +228,12 @@ struct visit_vm_value {
 					case value_typeof::array:
 						{
 							auto visit_entry = visit_entry_pair<visit_vm_property_key<visit_vm_value>, visit_vm_value&>{*this};
-							return accept(list_tag{}, visit_entry, bound_value{lock_, value_of<record_tag>::from(subject)});
+							return accept(list_tag{}, visit_entry, value_of{lock_, local_of<record_tag>::from(subject)});
 						}
 					case value_typeof::dictionary:
 						{
 							auto visit_entry = visit_entry_pair<visit_vm_property_key<visit_vm_value>, visit_vm_value&>{*this};
-							return accept(dictionary_tag{}, visit_entry, bound_value{lock_, value_of<record_tag>::from(subject)});
+							return accept(dictionary_tag{}, visit_entry, value_of{lock_, local_of<record_tag>::from(subject)});
 						}
 					default: std::unreachable();
 				}
@@ -241,7 +241,7 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		constexpr auto inspected(value_typeof type_of, value_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		constexpr auto inspected(value_typeof type_of, local_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			switch (type_of) {
 				case value_typeof::array_buffer: return accept_as(array_buffer_tag{}, subject, accept);
 				case value_typeof::shared_array_buffer: return accept_as(shared_array_buffer_tag{}, subject, accept);
@@ -250,7 +250,7 @@ struct visit_vm_value {
 		}
 
 		template <class Accept>
-		constexpr auto inspected(value_typeof type_of, value_of<array_buffer_view_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+		constexpr auto inspected(value_typeof type_of, local_of<array_buffer_view_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
 			switch (type_of) {
 				case value_typeof::bigint64_array: return accept_as(typed_array_tag_of<std::int64_t>{}, subject, accept);
 				case value_typeof::biguint64_array: return accept_as(typed_array_tag_of<std::uint64_t>{}, subject, accept);
@@ -270,8 +270,8 @@ struct visit_vm_value {
 		}
 
 		template <class Accept, class Tag>
-		auto accept_as(Tag tag, value_of<> subject, const Accept& accept) -> accept_target_t<Accept> {
-			return accept(tag, *this, bound_value{lock_, value_of<Tag>::from(subject)});
+		auto accept_as(Tag tag, local_of<> subject, const Accept& accept) -> accept_target_t<Accept> {
+			return accept(tag, *this, value_of{lock_, local_of<Tag>::from(subject)});
 		}
 
 		std::reference_wrapper<const runtime_lock> lock_;
@@ -283,12 +283,12 @@ namespace js {
 using namespace isolated_vm;
 
 template <class Tag>
-struct visit<void, value_of<Tag>> : visit_vm_value {
+struct visit<void, local_of<Tag>> : visit_vm_value {
 		using visit_vm_value::visit_vm_value;
 };
 
 template <auto Key>
-struct visit_key_literal<Key, value_of<record_tag>> : visit_vm_key_literal<Key> {
+struct visit_key_literal<Key, local_of<record_tag>> : visit_vm_key_literal<Key> {
 		using visit_vm_key_literal<Key>::visit_vm_key_literal;
 };
 

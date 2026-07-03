@@ -7,7 +7,7 @@ target_link_libraries(isolated_vm PRIVATE ${auto_js} utility_js)
 target_sources(isolated_vm
 	PUBLIC FILE_SET CXX_MODULES FILES
 		_module.cc
-		handle/bound_value.cc
+		handle/local_of.cc
 		handle/types.cc
 		handle/value_of.cc
 		support/callback_info.cc

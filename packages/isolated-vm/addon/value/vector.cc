@@ -1,7 +1,7 @@
 module;
 #include "auto_js/export_tag.h"
 export module isolated_vm:value.vector;
-import :handle.bound_value;
+import :handle.local_of;
 import :handle.value_of;
 import :value.object;
 import auto_js;
@@ -11,12 +11,12 @@ import util;
 namespace isolated_vm {
 using namespace js;
 
-// bound_value<vector_tag>
-class EXPORT bound_value_for_vector : public bound_value_next<vector_tag> {
+// value_of<vector_tag>
+class EXPORT value_for_vector : public value_next<vector_tag> {
 	public:
 		class iterator;
-		using bound_value_next<vector_tag>::bound_value_next;
-		using value_type = value_of<>;
+		using value_next<vector_tag>::value_next;
+		using value_type = local_of<>;
 
 		[[nodiscard]] auto begin() const -> iterator;
 		[[nodiscard]] auto end() const -> iterator;
@@ -26,15 +26,15 @@ class EXPORT bound_value_for_vector : public bound_value_next<vector_tag> {
 		mutable std::uint32_t size_{};
 };
 
-class EXPORT bound_value_for_vector::iterator : public util::random_access_iterator_facade<std::int32_t, std::int64_t> {
+class EXPORT value_for_vector::iterator : public util::random_access_iterator_facade<std::int32_t, std::int64_t> {
 	public:
 		using arithmetic_facade::operator+;
 		using difference_type = arithmetic_facade::difference_type;
 		using size_type = std::uint32_t;
-		using value_type = bound_value_for_vector::value_type;
+		using value_type = value_for_vector::value_type;
 
 		iterator() = default;
-		iterator(bound_value_for_vector subject, size_type index);
+		iterator(value_for_vector subject, size_type index);
 
 		auto operator*() const -> value_type;
 
@@ -49,7 +49,7 @@ class EXPORT bound_value_for_vector::iterator : public util::random_access_itera
 	private:
 		constexpr auto operator+() const -> size_type { return index_; }
 
-		bound_value_for_vector subject_;
+		value_for_vector subject_;
 		size_type index_{};
 };
 
