@@ -50,6 +50,7 @@ struct value_specialization<date_tag> : std::type_identity<class value_for_date>
 template <>
 struct value_specialization<external_tag> : std::type_identity<class value_for_external> {};
 
+// TODO: value_for_record
 template <>
 struct value_specialization<object_tag> : std::type_identity<class value_for_object> {};
 

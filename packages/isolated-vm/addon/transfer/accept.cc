@@ -250,6 +250,20 @@ struct accept_vm_value : accept_vm_primitive {
 		}
 };
 
+// Forward `value_of<T>`
+template <class Tag>
+struct accept_vm_value_of {
+	public:
+		explicit accept_vm_value_of(auto* /*transfer*/) {}
+
+		auto operator()(Tag /*tag*/, visit_holder /*visit*/, value_of<Tag> subject) const -> value_of<Tag> {
+			return subject;
+		}
+
+		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+};
+
 // Object key lookup (struct_template, etc)
 template <class Meta, auto Key, class Type>
 struct accept_vm_property_value {
@@ -297,6 +311,12 @@ struct accept<void, local_of<Tag>> : accept_vm_prototype {
 template <std::convertible_to<value_tag> Tag>
 struct accept<void, local_of<Tag>> : accept_vm_value {
 		using accept_vm_value::accept_vm_value;
+};
+
+// Forward `value_of<T>`
+template <class Meta, class Tag>
+struct accept<Meta, isolated_vm::value_of<Tag>> : isolated_vm::accept_vm_value_of<Tag> {
+		using isolated_vm::accept_vm_value_of<Tag>::accept_vm_value_of;
 };
 
 // Object key lookup (struct_template, etc)

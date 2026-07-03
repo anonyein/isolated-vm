@@ -299,6 +299,20 @@ struct accept_napi_value : accept_basic_napi_value {
 		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
+// Forward `value_of<T>`
+template <class Tag>
+struct accept_napi_value_of {
+	public:
+		explicit accept_napi_value_of(auto* /*transfer*/) {}
+
+		auto operator()(Tag /*tag*/, visit_holder /*visit*/, value_of<Tag> subject) const -> value_of<Tag> {
+			return subject;
+		}
+
+		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+};
+
 // `local_of<object_tag>{}.assign(...)` implementation
 struct object_assign_delegate {
 	public:
@@ -337,14 +351,10 @@ struct accept<Meta, napi::local_of<Tag>> : napi::accept_napi_value_with<Meta> {
 		using accept_type::accept_type;
 };
 
-// Forwarded `local_of<T>` acceptor
-template <class Tag>
-struct accept<void, js::forward<napi::local_of<Tag>, Tag>> {
-		auto operator()(Tag /*tag*/, visit_holder /*visit*/, napi::local_of<Tag> subject) const -> js::forward<napi::local_of<Tag>, Tag> {
-			return js::forward{napi::local_of<Tag>{subject}, Tag{}};
-		}
-
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+// Forward `value_of<T>`
+template <class Meta, class Tag>
+struct accept<Meta, napi::value_of<Tag>> : napi::accept_napi_value_of<Tag> {
+		using napi::accept_napi_value_of<Tag>::accept_napi_value_of;
 };
 
 // Object key lookup via napi

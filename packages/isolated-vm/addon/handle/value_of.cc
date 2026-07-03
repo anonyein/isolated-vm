@@ -5,7 +5,7 @@ import :support.lock_fwd;
 namespace isolated_vm {
 
 // Member & method implementation for stateful objects. Used internally in visitors.
-template <class Tag>
+export template <class Tag>
 class value_of : public value_specialization<Tag>::bound_type {
 	public:
 		using value_specialization<Tag>::bound_type::bound_type;

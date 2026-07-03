@@ -38,7 +38,7 @@ template <class Type>
 class local_for_typed_array_of;
 
 // `value_of` forward declarations
-template <class Tag>
+export template <class Tag>
 class value_of;
 
 template <class Tag>

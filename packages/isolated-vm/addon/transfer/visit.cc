@@ -277,6 +277,40 @@ struct visit_vm_value {
 		std::reference_wrapper<const runtime_lock> lock_;
 };
 
+// Forward `value_of<T>` back to acceptor
+template <class Tag>
+struct visit_vm_value_of {
+	private:
+		using visit_type = visit_vm_value;
+
+	public:
+		constexpr explicit visit_vm_value_of(const runtime_lock& lock) : visit_{lock} {}
+
+		template <class Accept>
+		constexpr auto operator()(value_of<Tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			return accept(Tag{}, visit_, subject);
+		}
+
+		template <class Accept>
+			requires std::is_same_v<Tag, object_tag>
+		constexpr auto operator()(value_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			auto visit_entry = visit_entry_pair<visit_vm_property_key<visit_type>, visit_type&>{visit_};
+			return accept(object_tag{}, visit_entry, subject);
+		}
+
+		template <class Accept>
+			requires std::is_same_v<Tag, list_tag>
+		constexpr auto operator()(value_of<list_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			auto visit_entry = visit_entry_pair<visit_vm_property_key<visit_type>, visit_type&>{visit_};
+			return accept(list_tag{}, visit_entry, subject);
+		}
+
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+
+	private:
+		visit_type visit_;
+};
+
 } // namespace isolated_vm
 
 namespace js {
@@ -286,6 +320,15 @@ template <class Tag>
 struct visit<void, local_of<Tag>> : visit_vm_value {
 		using visit_vm_value::visit_vm_value;
 };
+
+// Pass through `value_of<Tag>`
+template <class Tag>
+struct visit<void, isolated_vm::value_of<Tag>> : isolated_vm::visit_vm_value_of<Tag> {
+		using isolated_vm::visit_vm_value_of<Tag>::visit_vm_value_of;
+};
+
+template <class Tag>
+struct visit_subject_for<isolated_vm::value_of<Tag>> : std::type_identity<isolated_vm::local_of<Tag>> {};
 
 template <auto Key>
 struct visit_key_literal<Key, local_of<record_tag>> : visit_vm_key_literal<Key> {

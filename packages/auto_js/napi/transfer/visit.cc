@@ -402,6 +402,40 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 		std::reference_wrapper<Environment> env_;
 };
 
+// Forward `value_of<T>` back to acceptor
+template <class Meta, class Tag>
+struct visit_napi_value_of {
+	private:
+		using visit_type = visit_value_with<Meta>;
+
+	public:
+		constexpr explicit visit_napi_value_of(auto* transfer, auto& environment) : visit_{transfer, environment} {}
+
+		template <class Accept>
+		constexpr auto operator()(value_of<Tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			return accept(Tag{}, visit_, subject);
+		}
+
+		template <class Accept>
+			requires std::is_same_v<Tag, object_tag>
+		constexpr auto operator()(value_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			auto visit_entry = visit_entry_pair<visit_property_name<visit_type>, visit_type&>{visit_};
+			return accept(object_tag{}, visit_entry, subject);
+		}
+
+		template <class Accept>
+			requires std::is_same_v<Tag, list_tag>
+		constexpr auto operator()(value_of<list_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
+			auto visit_entry = visit_entry_pair<visit_property_name<visit_type>, visit_type&>{visit_};
+			return accept(list_tag{}, visit_entry, subject);
+		}
+
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+
+	private:
+		visit_type visit_;
+};
+
 } // namespace js::napi
 
 namespace js {
@@ -416,6 +450,15 @@ template <class Meta, class Tag>
 struct visit<Meta, napi::local_of<Tag>> : napi::visit_value_with<Meta> {
 		using napi::visit_value_with<Meta>::visit_value_with;
 };
+
+// Pass through `value_of<Tag>`
+template <class Meta, class Tag>
+struct visit<Meta, napi::value_of<Tag>> : napi::visit_napi_value_of<Meta, Tag> {
+		using napi::visit_napi_value_of<Meta, Tag>::visit_napi_value_of;
+};
+
+template <class Tag>
+struct visit_subject_for<napi::value_of<Tag>> : std::type_identity<napi_value> {};
 
 // Object key maker via napi
 template <auto Key>

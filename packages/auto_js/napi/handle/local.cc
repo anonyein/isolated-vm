@@ -26,17 +26,17 @@ class local_next : public local_of<typename Tag::tag_type> {
 		static auto from(napi_value value_) -> local_of<Tag> { return std::bit_cast<local_of<Tag>>(value_); }
 };
 
-// Deduction guide for `local_of{value_of}`
-template <class Type>
-	requires requires { typename Type::tag_type; }
-local_of(Type value) -> local_of<typename Type::tag_type>;
-
 // Tagged napi_value
 export template <class Tag>
 class local_of : public value_specialization<Tag>::local_type {
 	public:
 		using value_specialization<Tag>::local_type::local_type;
 };
+
+// Deduction guide for `local_of{value_of}`
+template <class Type>
+	requires requires { typename Type::tag_type; }
+local_of(Type value) -> local_of<typename Type::tag_type>;
 
 // Sentinel instantiation
 template <>
