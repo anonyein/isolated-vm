@@ -1,5 +1,5 @@
 diff --git a/src/codegen/interface-descriptors.h b/src/codegen/interface-descriptors.h
-index 47fe69dab9b..4e41e7cbc81 100644
+index 47fe69dab9..4e41e7cbc8 100644
 --- a/src/codegen/interface-descriptors.h
 +++ b/src/codegen/interface-descriptors.h
 @@ -276,7 +276,7 @@ class V8_EXPORT_PRIVATE CallInterfaceDescriptorData {
@@ -12,7 +12,7 @@ index 47fe69dab9b..4e41e7cbc81 100644
        allocatable_registers_.set(registers[i]);
      }
 diff --git a/src/common/segmented-table-inl.h b/src/common/segmented-table-inl.h
-index 94a6d82e8e3..ccb82ae7279 100644
+index 94a6d82e8e..ccb82ae727 100644
 --- a/src/common/segmented-table-inl.h
 +++ b/src/common/segmented-table-inl.h
 @@ -122,7 +122,7 @@ void SegmentedTable<Entry, size>::Initialize() {
@@ -25,7 +25,7 @@ index 94a6d82e8e3..ccb82ae7279 100644
      }
  
 diff --git a/src/init/v8.cc b/src/init/v8.cc
-index 381748382db..8c9e9375238 100644
+index 381748382d..8c9e937523 100644
 --- a/src/init/v8.cc
 +++ b/src/init/v8.cc
 @@ -89,6 +89,9 @@ void AdvanceStartupState(V8StartupState expected_next_state) {
@@ -39,7 +39,7 @@ index 381748382db..8c9e9375238 100644
      FATAL(
          "Multiple threads are initializating V8 in the wrong order: expected "
 diff --git a/src/objects/elements.cc b/src/objects/elements.cc
-index 9529b07d3e8..71dc2834669 100644
+index 9529b07d3e..71dc283466 100644
 --- a/src/objects/elements.cc
 +++ b/src/objects/elements.cc
 @@ -5987,14 +5987,14 @@ void ElementsAccessor::InitializeOncePerProcess() {

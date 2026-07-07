@@ -1,5 +1,5 @@
 diff --git a/include/v8-object.h b/include/v8-object.h
-index ffab3f5ff53..2af8d87adde 100644
+index ffab3f5ff5..2af8d87add 100644
 --- a/include/v8-object.h
 +++ b/include/v8-object.h
 @@ -405,7 +405,7 @@ class V8_EXPORT Object : public Value {
@@ -12,7 +12,7 @@ index ffab3f5ff53..2af8d87adde 100644
        SideEffectType getter_side_effect_type = SideEffectType::kHasSideEffect,
        SideEffectType setter_side_effect_type = SideEffectType::kHasSideEffect) {
 diff --git a/include/v8-template.h b/include/v8-template.h
-index 741342c70e2..ddcef1f9c00 100644
+index 741342c70e..ddcef1f9c0 100644
 --- a/include/v8-template.h
 +++ b/include/v8-template.h
 @@ -117,7 +117,7 @@ class V8_EXPORT Template : public Data {

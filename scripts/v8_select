@@ -41,7 +41,7 @@ for PATCH in $PATCHES; do
 		git clean --force 1>&2
 		git -C "$PATH_TO" apply --3way < "$PATCH" 1>&2
 		git -C "$PATH_TO" -c user.name=patches -c user.email='<>' commit --allow-empty --message="$PATCH" 1>&2
-		git -C "$PATH_TO" diff HEAD~1 HEAD > "$PATCH"
+		git -C "$PATH_TO" diff --abbrev=10 HEAD~1 HEAD > "$PATCH"
 	fi
 done
 
