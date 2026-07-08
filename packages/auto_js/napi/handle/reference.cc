@@ -1,6 +1,6 @@
 export module napi_js:reference;
 import :api;
-import :value_handle;
+import :handle.local_of;
 import std;
 import util;
 

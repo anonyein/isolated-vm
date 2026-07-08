@@ -35,7 +35,7 @@ class napi_js_module final : private detail::initialize_require {
 			auto& client_environment = environment::make_and_set_environment<Environment>(env, std::get<indices>(std::move(args_))...);
 			// assign export descriptor to napi-constructor namespace object
 			auto exports_local = local_of<dictionary_tag>::from(exports);
-			exports_local.assign(client_environment, std::move(make_exports_)(client_environment));
+			exports_local->assign(client_environment, std::move(make_exports_)(client_environment));
 		}
 
 		Make make_exports_;

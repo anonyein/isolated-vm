@@ -17,7 +17,7 @@ auto script_handle::compile_script(environment& env, agent_handle& agent, js::st
 		env,
 		[](environment& env, expected_type script) -> auto {
 			return completion_record{script.transform([ & ](script_handle& script) -> auto {
-				return js::forward{script_handle::class_template(env).construct(env, std::move(script))};
+				return js::forward{script_handle::class_template(env)->construct(env, std::move(script))};
 			})};
 		}
 	);

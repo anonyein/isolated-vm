@@ -313,7 +313,7 @@ struct accept_napi_value_of {
 		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
-// `local_of<object_tag>{}.assign(...)` implementation
+// `local_of<object_tag>{}->assign(...)` implementation
 struct object_assign_delegate {
 	public:
 		explicit object_assign_delegate(local_of<object_tag> object) : object_{object} {}
@@ -323,8 +323,8 @@ struct object_assign_delegate {
 		local_of<object_tag> object_;
 };
 
-auto local_for_object::assign(this local_of<object_tag> self, auto_environment auto& env, auto source) -> void {
-	js::transfer_in<object_assign_delegate>(std::move(source), env, object_assign_delegate{self});
+auto local_for_object::assign(auto_environment auto& env, auto source) const -> void {
+	js::transfer_in<object_assign_delegate>(std::move(source), env, object_assign_delegate{local_of{*this}});
 }
 
 } // namespace js::napi

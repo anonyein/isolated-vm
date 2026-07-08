@@ -1,8 +1,8 @@
 export module napi_js:primitive;
 import :api;
-import :environment_fwd;
-import :value_handle;
-import :value_of;
+import :environment;
+import :handle.local_of;
+import :handle.value_of;
 import std;
 
 namespace js::napi {

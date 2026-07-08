@@ -1,7 +1,5 @@
 export module napi_js:external;
-import :api;
 import :object;
-import :value_of;
 import std;
 
 namespace js::napi {

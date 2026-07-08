@@ -133,4 +133,19 @@ class reference_wrapper {
 		Type* value_;
 };
 
+// Wrapper allowing the return of temporaries from `operator->()`
+export template <class Type>
+class pointer_delegate {
+	public:
+		constexpr explicit pointer_delegate(const Type& value) : value{value} {}
+		constexpr explicit pointer_delegate(Type&& value) : value{std::move(value)} {}
+		constexpr auto operator*() -> Type& { return value; }
+		constexpr auto operator*() const -> const Type& { return value; }
+		constexpr auto operator->() -> Type* { return &value; }
+		constexpr auto operator->() const -> const Type* { return &value; }
+
+	private:
+		Type value;
+};
+
 } // namespace util

@@ -31,7 +31,7 @@ auto native_module_handle::instantiate(environment& env, realm_handle* realm) ->
 	auto [ promise, resolver ] = make_promise(
 		env,
 		[](environment& env, agent_handle agent, js::iv8::shared_remote<v8::Module> module_record) -> auto {
-			return js::forward{module_handle::class_template(env).construct(env, std::move(agent), std::move(module_record))};
+			return js::forward{module_handle::class_template(env)->construct(env, std::move(agent), std::move(module_record))};
 		}
 	);
 	if (realm == nullptr) {
@@ -112,7 +112,7 @@ auto native_module_handle::create(environment& env, std::string filename, create
 			auto [ lib, names, initialize ] = isolated_vm::subscribe_registration([ & ]() -> auto {
 				return js::napi::uv_dlib{filename};
 			});
-			auto handle = native_module_handle::class_template(env).construct(env, std::move(lib), initialize, std::move(options), names());
+			auto handle = native_module_handle::class_template(env)->construct(env, std::move(lib), initialize, std::move(options), names());
 			return js::forward{handle};
 		}
 	);

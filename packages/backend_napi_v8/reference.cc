@@ -106,7 +106,7 @@ auto reference_handle::copy(environment& env) -> forward_promise_type {
 
 auto reference_handle::get(environment& env, js::string_t name) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(env, [](environment& env, reference_handle reference) -> auto {
-		return js::forward{reference_handle::class_template(env).construct(env, std::move(reference))};
+		return js::forward{reference_handle::class_template(env)->construct(env, std::move(reference))};
 	});
 	switch (typeof_) {
 		// Any property on these types is just `undefined`

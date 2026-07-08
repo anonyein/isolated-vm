@@ -140,7 +140,7 @@ class canvas {
 
 		// Static factory — called as Canvas.create(name) from JavaScript.
 		static auto create(environment& env, std::u8string name) -> js::forward<js::napi::local_of<js::object_tag>> {
-			return js::forward{canvas::class_template(env).construct(env, std::move(name))};
+			return js::forward{canvas::class_template(env)->construct(env, std::move(name))};
 		}
 
 		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<canvas>> {

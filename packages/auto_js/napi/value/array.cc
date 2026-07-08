@@ -1,6 +1,4 @@
 module napi_js;
-import :api;
-import :value_of;
 
 namespace js::napi {
 

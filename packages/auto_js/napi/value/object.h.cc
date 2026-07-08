@@ -1,8 +1,5 @@
 export module napi_js:object;
-import :api;
-import :environment_fwd;
 import :primitive;
-import :value_of;
 import std;
 
 namespace js::napi {
@@ -10,7 +7,7 @@ namespace js::napi {
 // object
 class local_for_object : public local_next<object_tag> {
 	public:
-		auto assign(this local_of<object_tag> self, auto_environment auto& env, auto source) -> void;
+		auto assign(auto_environment auto& env, auto source) const -> void;
 };
 
 class value_for_object : public value_next<object_tag> {
@@ -43,9 +40,5 @@ auto value_for_object::try_cast(std::type_identity<Type> /*type*/) const -> Type
 		return nullptr;
 	}
 }
-
-// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125144
-template class value_next<data_block_tag>;
-template class value_next<array_buffer_view_tag>;
 
 } // namespace js::napi

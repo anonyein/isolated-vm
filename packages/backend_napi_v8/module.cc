@@ -29,7 +29,7 @@ auto module_handle::compile(
 			return completion_record{result.transform([ & ](value_type& module_data) -> auto {
 				auto& [ module_, specifier, requests ] = module_data;
 				auto class_template = js::napi::local_of<class_tag_of<module_handle>>::from(env.module_class());
-				return js::forward{class_template.runtime_construct(
+				return js::forward{class_template->runtime_construct(
 					env,
 					std::tuple{std::move(module_)},
 					std::tuple{std::move(specifier), std::move(requests)}
@@ -75,7 +75,7 @@ auto module_handle::create_capability(
 	auto [ promise, resolver ] = make_promise(
 		env,
 		[](environment& env, module_handle module_) -> auto {
-			return js::forward{module_handle::class_template(env).construct(env, std::move(module_))};
+			return js::forward{module_handle::class_template(env)->construct(env, std::move(module_))};
 		}
 	);
 
@@ -83,7 +83,7 @@ auto module_handle::create_capability(
 	using capability_type = std::variant<forward_callback_type, js::tagged_external<subscriber_capability>>;
 	using capability_interface_type = js::dictionary<js::dictionary_tag, js::string_t, capability_type>;
 	auto subscriber = subscriber_capability::make(env);
-	auto local_capability_interface = make_capability.call<capability_interface_type>(env, js::forward{subscriber});
+	auto local_capability_interface = make_capability->call<capability_interface_type>(env, js::forward{subscriber});
 
 	// Makes `js::free_function` which invokes the user-supplied callback capability
 	auto make_capability_callback = [ & ](forward_callback_type capability) -> auto {
@@ -93,7 +93,7 @@ auto module_handle::create_capability(
 				environment& env,
 				js::values_vector_t params
 			) -> void {
-			callback->deref(env).apply(env, std::move(params));
+			callback->deref(env)->apply(env, std::move(params));
 		};
 		// Invoked in the isolate thread
 		return js::free_function{
@@ -346,7 +346,7 @@ auto subscriber_capability::send(environment& env, js::forward<napi::local_of<>>
 auto subscriber_capability::make(environment& env) -> js::napi::local_of<js::object_tag> {
 	auto capability = std::make_shared<subscriber_capability>(private_constructor{});
 	capability->subscriber_ = std::make_shared<subscriber>(capability);
-	return class_template(env).transfer_construct(env, std::move(capability), std::tuple{});
+	return class_template(env)->transfer_construct(env, std::move(capability), std::tuple{});
 }
 
 auto subscriber_capability::class_template(environment& env) -> js::napi::local_of<js::class_tag_of<subscriber_capability>> {

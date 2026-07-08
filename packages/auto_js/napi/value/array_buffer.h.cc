@@ -1,6 +1,4 @@
 export module napi_js:array_buffer;
-import :value_of;
-import :environment;
 import :object;
 import std;
 import v8;

@@ -1,5 +1,5 @@
 export module napi_js:support.host;
-import :value_handle;
+import :handle.local_of;
 import std;
 
 namespace js::napi {

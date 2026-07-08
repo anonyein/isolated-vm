@@ -1,7 +1,4 @@
 module napi_js;
-import :api;
-import :array_buffer;
-import :support.host;
 import std;
 import v8;
 
