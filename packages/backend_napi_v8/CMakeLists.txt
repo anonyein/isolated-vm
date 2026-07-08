@@ -115,9 +115,11 @@ if(IVM_INSTALL STREQUAL artifacts)
 elseif(IVM_INSTALL STREQUAL link)
 	# Setup development package
 	set(LOCAL_BACKEND_PACKAGE "${CMAKE_CURRENT_BINARY_DIR}")
+	set(LOCAL_NODE_MODULES "${CMAKE_SOURCE_DIR}/packages/isolated-vm/node_modules/@isolated-vm")
+	cmake_path(RELATIVE_PATH CMAKE_CURRENT_BINARY_DIR BASE_DIRECTORY "${LOCAL_NODE_MODULES}" OUTPUT_VARIABLE LOCAL_BACKEND_RELATIVE)
 	add_custom_command(
 		TARGET backend_napi_v8 POST_BUILD COMMAND ${CMAKE_COMMAND} -E create_symlink
-		"${CMAKE_CURRENT_BINARY_DIR}"
-		"${CMAKE_SOURCE_DIR}/packages/isolated-vm/node_modules/@isolated-vm/experimental-${HOST_PLATFORM}")
+		"${LOCAL_BACKEND_RELATIVE}"
+		"${LOCAL_NODE_MODULES}/experimental-${HOST_PLATFORM}")
 endif()
 file(WRITE "${LOCAL_BACKEND_PACKAGE}/package.json" "{\"main\":\"backend_napi_v8.${HOST_PLATFORM}.node\"}\n")
