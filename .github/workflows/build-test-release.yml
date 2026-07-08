@@ -526,6 +526,10 @@ jobs:
       # Install Deno (maybe)
       - if: matrix.runtime.runtime == 'deno'
         uses: denoland/setup-deno@v2
+        with:
+          # TODO: Back to latest when this lands:
+          # https://github.com/denoland/deno/commit/c6963a84905fe46d528e0d2e2d5075cedff3540a
+          deno-version: canary
 
       # Install npm dependencies, build TypeScript, check module sanity
       - uses: pnpm/action-setup@v5
