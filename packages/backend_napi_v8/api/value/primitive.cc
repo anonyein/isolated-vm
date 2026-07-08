@@ -48,9 +48,9 @@ auto local_for_value::is_undefined() const -> bool {
 auto local_for_value::inspect() const -> value_typeof {
 	auto subject = cast_in(*this);
 	if (subject->IsPrimitive()) {
-		return local_of<primitive_tag>::from(*this).inspect();
+		return local_of<primitive_tag>::from(*this)->inspect();
 	} else {
-		return local_of<object_tag>::from(*this).inspect();
+		return local_of<object_tag>::from(*this)->inspect();
 	}
 }
 
@@ -61,13 +61,13 @@ auto local_for_primitive::inspect() const -> value_typeof {
 	} else if (subject->IsNull()) {
 		return value_typeof::null;
 	} else if (subject->IsNumber()) {
-		return local_of<number_tag>::from(*this).inspect();
+		return local_of<number_tag>::from(*this)->inspect();
 	} else if (subject->IsName()) {
-		return local_of<name_tag>::from(*this).inspect();
+		return local_of<name_tag>::from(*this)->inspect();
 	} else if (subject->IsBoolean()) {
 		return value_typeof::boolean;
 	} else if (subject->IsBigInt()) {
-		return local_of<bigint_tag>::from(*this).inspect();
+		return local_of<bigint_tag>::from(*this)->inspect();
 	} else {
 		std::unreachable();
 	}
@@ -121,7 +121,7 @@ value_for_number::operator std::int32_t() const {
 auto local_for_name::inspect() const -> value_typeof {
 	auto subject = cast_in(*this);
 	if (subject->IsString()) {
-		return local_of<string_tag>::from(*this).inspect();
+		return local_of<string_tag>::from(*this)->inspect();
 	} else {
 		return value_typeof::symbol;
 	}

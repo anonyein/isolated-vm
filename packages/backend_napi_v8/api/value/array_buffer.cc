@@ -90,11 +90,7 @@ auto value_for_typed_array_of<Type>::byte_offset() const -> std::size_t {
 
 template <class Type>
 auto value_for_typed_array_of<Type>::size() const -> std::size_t {
-	if constexpr (type<Type> == type<void>) {
-		return cast_in(local_of{*this})->ByteLength();
-	} else {
-		return cast_in(local_of{*this})->Length();
-	}
+	return cast_in(local_of{*this})->Length();
 }
 
 template class value_for_typed_array_of<double>;
@@ -109,6 +105,18 @@ template class value_for_typed_array_of<std::uint16_t>;
 template class value_for_typed_array_of<std::uint32_t>;
 template class value_for_typed_array_of<std::uint64_t>;
 template class value_for_typed_array_of<std::uint8_t>;
-template class value_for_typed_array_of<void>;
+
+// value_for_data_view
+auto value_for_data_view::buffer() const -> local_of<data_block_tag> {
+	return cast_out(cast_in(local_of{*this})->Buffer().template As<iv8::DataBlock>());
+}
+
+auto value_for_data_view::byte_offset() const -> std::size_t {
+	return cast_in(local_of{*this})->ByteOffset();
+}
+
+auto value_for_data_view::size() const -> std::size_t {
+	return cast_in(local_of{*this})->ByteLength();
+}
 
 } // namespace isolated_vm

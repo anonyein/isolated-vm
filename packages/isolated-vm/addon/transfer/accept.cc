@@ -37,11 +37,11 @@ struct accept_vm_primitive {
 
 		// number
 		auto operator()(number_tag_of<double> /*tag*/, visit_holder /*visit*/, double subject) const -> local_of<number_tag_of<double>> {
-			return local_of<number_tag>::make(lock(), subject);
+			return local_of<number_tag_of<double>>::make(lock(), subject);
 		}
 
 		auto operator()(number_tag_of<std::int32_t> /*tag*/, visit_holder /*visit*/, std::int32_t subject) const -> local_of<number_tag_of<std::int32_t>> {
-			return local_of<number_tag>::make(lock(), subject);
+			return local_of<number_tag_of<std::int32_t>>::make(lock(), subject);
 		}
 
 		auto operator()(number_tag /*tag*/, visit_holder visit, auto&& subject) const -> local_of<number_tag> {
@@ -56,12 +56,12 @@ struct accept_vm_primitive {
 		// string
 		auto operator()(string_tag_of<char> /*tag*/, visit_holder /*visit*/, std::string_view subject) const
 			-> js::referenceable_value<local_of<string_tag_of<char>>> {
-			return js::referenceable_value{local_of<string_tag>::make(lock(), subject)};
+			return js::referenceable_value{local_of<string_tag_of<char>>::make(lock(), subject)};
 		}
 
 		auto operator()(string_tag_of<char16_t> /*tag*/, visit_holder /*visit*/, std::u16string_view subject) const
 			-> js::referenceable_value<local_of<string_tag_of<char16_t>>> {
-			return js::referenceable_value{local_of<string_tag>::make(lock(), subject)};
+			return js::referenceable_value{local_of<string_tag_of<char16_t>>::make(lock(), subject)};
 		}
 
 		auto operator()(string_tag /*tag*/, visit_holder visit, auto&& subject) const
@@ -85,7 +85,7 @@ struct accept_vm_primitive {
 		// bigint (int64)
 		auto operator()(bigint_tag_of<std::int64_t> /*tag*/, visit_holder /*visit*/, std::int64_t subject) const
 			-> js::referenceable_value<local_of<bigint_tag_of<std::int64_t>>> {
-			return js::referenceable_value{local_of<bigint_tag>::make(lock(), subject)};
+			return js::referenceable_value{local_of<bigint_tag_of<std::int64_t>>::make(lock(), subject)};
 		}
 
 		[[nodiscard]] auto lock() const -> const basic_lock& { return lock_; }
@@ -129,12 +129,12 @@ struct accept_vm_value : accept_vm_primitive {
 		// bigint (from words)
 		auto operator()(bigint_tag_of<js::bigint> /*tag*/, visit_holder /*visit*/, const js::bigint& subject) const
 			-> js::referenceable_value<local_of<bigint_tag_of<js::bigint>>> {
-			return js::referenceable_value{local_of<bigint_tag>::make(lock(), subject)};
+			return js::referenceable_value{local_of<bigint_tag_of<js::bigint>>::make(lock(), subject)};
 		}
 
 		auto operator()(bigint_tag_of<js::bigint> /*tag*/, visit_holder /*visit*/, js::bigint&& subject) const
 			-> js::referenceable_value<local_of<bigint_tag_of<js::bigint>>> {
-			return js::referenceable_value{local_of<bigint_tag>::make(lock(), std::move(subject))};
+			return js::referenceable_value{local_of<bigint_tag_of<js::bigint>>::make(lock(), std::move(subject))};
 		}
 
 		auto operator()(bigint_tag /*tag*/, visit_holder visit, auto&& subject) const
@@ -160,7 +160,7 @@ struct accept_vm_value : accept_vm_primitive {
 					for (auto&& [ key, value ] : util::forward_range(std::forward<decltype(range)>(range))) {
 						auto name = visit.first(std::forward<decltype(key)>(key), self);
 						auto item = visit.first(std::forward<decltype(value)>(value), self);
-						receiver.set(self.lock(), name, item);
+						receiver->set(self.lock(), name, item);
 					}
 				},
 			};
@@ -178,7 +178,7 @@ struct accept_vm_value : accept_vm_primitive {
 					auto&& range = util::into_range(std::forward<decltype(subject)>(subject));
 					for (auto&& element : util::forward_range(std::forward<decltype(range)>(range))) {
 						auto item = visit(std::forward<decltype(element)>(element), self);
-						receiver.set(self.lock(), ii++, item);
+						receiver->set(self.lock(), ii++, item);
 					}
 				},
 			};
@@ -194,7 +194,7 @@ struct accept_vm_value : accept_vm_primitive {
 					const auto [... indices ] = util::sequence<Size>;
 					(..., [ & ]() -> void {
 						auto element = visit(indices, std::forward<decltype(tuple)>(tuple), self);
-						unmaybe(receiver.set(self.lock(), indices, element));
+						unmaybe(receiver->set(self.lock(), indices, element));
 					}());
 				}
 			};
@@ -210,7 +210,7 @@ struct accept_vm_value : accept_vm_primitive {
 					for (auto&& [ key, value ] : util::into_range(subject)) {
 						auto name = visit.first(std::forward<decltype(key)>(key), self);
 						auto item = visit.first(std::forward<decltype(value)>(value), self);
-						receiver.set(self.lock(), name, item);
+						receiver->set(self.lock(), name, item);
 					}
 				},
 			};
@@ -235,7 +235,7 @@ struct accept_vm_value : accept_vm_primitive {
 			(..., [ & ]() -> void {
 				auto accept_entry = accept_entry_pair<decltype(self), decltype(self)>{self};
 				auto entry = visit(std::integral_constant<std::size_t, indices>{}, std::forward<decltype(subject)>(subject), accept_entry);
-				receiver.set(self.lock(), entry.first, entry.second);
+				receiver->set(self.lock(), entry.first, entry.second);
 			}());
 		}
 

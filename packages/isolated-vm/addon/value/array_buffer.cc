@@ -51,4 +51,13 @@ class EXPORT value_for_typed_array_of : public value_next<typed_array_tag_of<Typ
 		[[nodiscard]] auto size() const -> std::size_t;
 };
 
+// value_of<data_view_tag>
+class EXPORT value_for_data_view : public value_next<data_view_tag> {
+	public:
+		using value_next<data_view_tag>::value_next;
+		[[nodiscard]] auto buffer() const -> local_of<data_block_tag>;
+		[[nodiscard]] auto byte_offset() const -> std::size_t;
+		[[nodiscard]] auto size() const -> std::size_t;
+};
+
 } // namespace isolated_vm

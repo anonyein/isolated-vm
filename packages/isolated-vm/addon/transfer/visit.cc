@@ -52,13 +52,13 @@ struct visit_vm_property_key {
 				auto value = value_of{lock(), local_of<Tag>::from(subject)};
 				return accept(tag, *this, value);
 			};
-			if (subject.is_string()) {
-				if (local_of<string_tag>::from(subject).is_latin1()) {
+			if (subject->is_string()) {
+				if (local_of<string_tag>::from(subject)->is_latin1()) {
 					return accept_as(string_tag_of<char>{});
 				} else {
 					return accept_as(string_tag_of<char16_t>{});
 				}
-			} else if (subject.is_number()) {
+			} else if (subject->is_number()) {
 				return accept_as(number_tag_of<std::int32_t>{});
 			} else {
 				return accept_as(symbol_tag{});
@@ -99,31 +99,31 @@ struct visit_vm_value {
 				util::overloaded{
 					// Fast paths
 					[ & ](undefined_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_undefined() ? accept_as(undefined_tag{}, subject, accept) : next();
+						return subject->is_undefined() ? accept_as(undefined_tag{}, subject, accept) : next();
 					},
 					[ & ](null_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_null() ? accept_as(null_tag{}, subject, accept) : next();
+						return subject->is_null() ? accept_as(null_tag{}, subject, accept) : next();
 					},
 					[ & ](boolean_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_boolean() ? accept_as(boolean_tag{}, subject, accept) : next();
+						return subject->is_boolean() ? accept_as(boolean_tag{}, subject, accept) : next();
 					},
 					[ & ](number_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_number() ? accept_as(number_tag{}, subject, accept) : next();
+						return subject->is_number() ? accept_as(number_tag{}, subject, accept) : next();
 					},
 					[ & ](string_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_string() ? accept_as(string_tag{}, subject, accept) : next();
+						return subject->is_string() ? accept_as(string_tag{}, subject, accept) : next();
 					},
 					[ & ](bigint_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_bigint() ? accept_as(bigint_tag{}, subject, accept) : next();
+						return subject->is_bigint() ? accept_as(bigint_tag{}, subject, accept) : next();
 					},
 					[ & ](date_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_date() ? accept_as(date_tag{}, subject, accept) : next();
+						return subject->is_date() ? accept_as(date_tag{}, subject, accept) : next();
 					},
 					[ & ](list_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_array() ? accept_as(list_tag{}, subject, accept) : next();
+						return subject->is_array() ? accept_as(list_tag{}, subject, accept) : next();
 					},
 					[ & ](function_tag /*tag*/, auto next) -> accept_target_t<Accept> {
-						return subject.is_function() ? accept_as(function_tag{}, subject, accept) : next();
+						return subject->is_function() ? accept_as(function_tag{}, subject, accept) : next();
 					},
 
 					// Unknown tag
@@ -131,7 +131,7 @@ struct visit_vm_value {
 
 					// Slow path
 					[ & ]() -> accept_target_t<Accept> {
-						auto type = subject.inspect();
+						auto type = subject->inspect();
 						const auto [... primitive_types ] = primitive_typeofs;
 						if ((... || (type == primitive_types))) {
 							return inspected(type, local_of<primitive_tag>::from(subject), accept);
@@ -145,12 +145,12 @@ struct visit_vm_value {
 
 		template <class Accept>
 		auto operator()(local_of<primitive_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			return inspected(subject.inspect(), subject, accept);
+			return inspected(subject->inspect(), subject, accept);
 		}
 
 		template <class Accept>
 		auto operator()(local_of<number_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			switch (subject.inspect()) {
+			switch (subject->inspect()) {
 				case value_typeof::number: return accept_as(number_tag{}, subject, accept);
 				case value_typeof::number_i32: return accept_as(number_tag_of<std::int32_t>{}, subject, accept);
 				default: std::unreachable();
@@ -159,7 +159,7 @@ struct visit_vm_value {
 
 		template <class Accept>
 		auto operator()(local_of<string_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			switch (subject.inspect()) {
+			switch (subject->inspect()) {
 				case value_typeof::string: return accept_as(string_tag_of<char16_t>{}, subject, accept);
 				case value_typeof::string_latin1: return accept_as(string_tag_of<char>{}, subject, accept);
 				default: std::unreachable();
@@ -168,7 +168,7 @@ struct visit_vm_value {
 
 		template <class Accept>
 		auto operator()(local_of<bigint_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			switch (subject.inspect()) {
+			switch (subject->inspect()) {
 				case value_typeof::bigint: return accept_as(bigint_tag{}, subject, accept);
 				case value_typeof::bigint_i64: return accept_as(bigint_tag_of<std::int64_t>{}, subject, accept);
 				default: std::unreachable();
@@ -177,17 +177,17 @@ struct visit_vm_value {
 
 		template <class Accept>
 		auto operator()(local_of<object_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			return inspected(subject.inspect(), subject, accept);
+			return inspected(subject->inspect(), subject, accept);
 		}
 
 		template <class Accept>
 		auto operator()(local_of<data_block_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			return inspected(subject.inspect(), subject, accept);
+			return inspected(subject->inspect(), subject, accept);
 		}
 
 		template <class Accept>
 		auto operator()(local_of<array_buffer_view_tag> subject, const Accept& accept) -> accept_target_t<Accept> {
-			return inspected(subject.inspect(), subject, accept);
+			return inspected(subject->inspect(), subject, accept);
 		}
 
 		[[nodiscard]] auto lock() const -> const runtime_lock& { return lock_.get(); }
