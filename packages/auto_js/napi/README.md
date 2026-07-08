@@ -181,20 +181,20 @@ struct enum_values<enum_test> {
 
 ## Variants
 
-`std::variant<std::u16string, double>` could be used to accept *either* a string or a number value.
-You can mix and match types as needed.
+`std::variant<std::u16string, std::string, double, std::int32_t>` could be used to accept *either* a
+string or a number value. You can mix and match types as needed. If you use one of the covariant
+types then you must also use its alternative. `std::u16string, std::string`, `double, std::int32_t`,
+and `std::int64_t, js::bigint`.
 
 
 ## Covariants
 
 `std::variant<double, int32_t>` can be used to accept *either* a floating point or a signed integer.
 Note that this uses runtime function calls to resolve the covariance. In v8 it will invoke
-`value->IsInt32()` to discover what to return. Napi does not support this, so a `double` will always
-be returned.
+`value->IsInt32()` to discover what to return.
 
-`std::variant<std::string, std::u16string>` can be used in a similar way to accept either a UTF-16
+`std::variant<std::u16string, std::string>` can be used in a similar way to accept either a UTF-16
 string or the optimized ASCII string. This uses `value->IsOneByte()` to resolve the covariance.
-Again, in napi a UTF-16 string will always be returned.
 
 
 ## Structures
