@@ -1,6 +1,9 @@
 # clangd cache
 **/dist
 **/node_modules
+# Javet .so unpacked from libs.7z (each ~140MB, exceeds GitHub's 100MB limit)
+/libs/
+/deps/javet/
 /.cache
 /.env
 /.pnpm-store

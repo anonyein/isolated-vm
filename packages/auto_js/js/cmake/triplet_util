@@ -57,6 +57,14 @@ if [ ${TRIPLET+-} ]; then
 	case "$ENV" in
 		'') ;;
 		gnu|musl) ENV=-$ENV ;;
+		android)
+			# Android NDK triplets look like `aarch64-linux-android`: the third
+			# field is the OS, not a gnu/musl-style abi suffix. Re-map so that
+			# %p yields `android-arm64` / `android-x64` (Node's process.platform
+			# + arch on Android) and there is no abi suffix.
+			OS=android
+			ENV=
+			;;
 		*)
 			echo "Unsupported API / toolchain: $ENV" >&2
 			exit 1

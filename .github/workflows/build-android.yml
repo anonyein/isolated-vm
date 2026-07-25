@@ -1,4 +1,26 @@
-name: Build Android (Javet-linked, final)
+name: Build Android (Javet node .so)
+
+# Cross-compiles `backend_napi_v8.node` for Android, linking against Javet's
+# monolithic Node .so (which bundles V8 + libbase + libplatform + icu).
+#
+# Key design decisions (see investigation notes in PR / chat):
+#  * Toolchain: standalone LLVM (C++26 + `import std` capable) as the compiler,
+#    with the NDK only providing the sysroot (Android libc, system libs, and
+#    libc++_shared). NDK's own clang (18) can neither compile the C++26 syntax
+#    nor supply an `import std` module, which is why every hand-patched attempt
+#    with `sed`/manual module compilation was unsustainable.
+#  * Modules: CMake 4.0 performs C++20 module scanning/ordering natively. No
+#    manual PCM compilation, no `bits/stdc++.h`, no source rewriting.
+#  * `import std`: we hand-build a libc++ `std` module against the NDK's libc++
+#    headers and point CMake at it via CMAKE_CXX_STDLIB_MODULES_JSON, mirroring
+#    the ECO_STD mechanism used for Windows/macOS in build-test-release.yml.
+#  * V8 ABI: Javet's *node* .so follows Node's defaults -> pointer compression
+#    OFF, sandbox OFF, direct-handle OFF. An empty v8-gn.h (all macros undefined)
+#    is therefore the correct ABI configuration.
+#  * V8_TRICKSHOT is emptied so symbols stay in the real `v8::` namespace
+#    (default `blam` renames v8 -> y8 and would never resolve against Javet).
+#  * third_party/v8/CMakeLists.txt shared branch links a single library via
+#    -DV8_SHARED_LIBS instead of the 4 split GN libraries.
 
 on:
   workflow_dispatch:
@@ -6,10 +28,15 @@ on:
     branches: [ experimental ]
 
 env:
-  JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.7.so
-  NODE_HEADERS: 24.15.0
-  ANDROID_NDK_VERSION: r30-beta1
-  ANDROID_NDK_HOME: /tmp/android-ndk
+  JAVET_VERSION: 5.0.10
+  NODE_HEADERS: 24.18.0
+  # Standalone LLVM release used as the cross compiler. Must support C++26 and
+  # ship std.cppm + libc++.modules.json.
+  LLVM_VERSION: "20.1.8"
+  # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
+  # ABI-stable against the LLVM_VERSION headers we compile with.
+  ANDROID_NDK_VERSION: r27c
+  ANDROID_API: "24"
 
 jobs:
   build-android:
@@ -21,368 +48,279 @@ jobs:
         include:
           - abi: arm64-v8a
             triplet: aarch64-linux-android
-            ndk_api: 24
-            download_url: "https://links.8uid.com/d/7d0062b9e4e4fe1bd0084ce96354239c"
           - abi: x86_64
             triplet: x86_64-linux-android
-            ndk_api: 24
-            download_url: "https://links.8uid.com/d/c36d90e473694d96e422a823bd1148c7"
 
     env:
-      TRIPLET: ${{ matrix.triplet }}
       ABI: ${{ matrix.abi }}
+      TRIPLET: ${{ matrix.triplet }}
+      JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.10.so
 
     steps:
-      - name: Checkout 代码
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: 安装系统依赖
+      - name: System dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build curl tar zstd libboost-all-dev
+          # xxd is required by embed.sh (embeds runtime/dist/interface.js into a C blob)
+          sudo apt-get install -y ninja-build curl xz-utils p7zip-full libboost-all-dev xxd
 
-      - name: 准备独立的 Boost 头文件目录
+      # Boost headers only (isolated-vm uses Boost header-only); expose them to
+      # the cross build without dragging in host libraries.
+      - name: Stage Boost headers
         run: |
-          mkdir -p /tmp/host-boost-headers
-          cp -r /usr/include/boost /tmp/host-boost-headers/boost
+          mkdir -p /tmp/boost-headers
+          cp -r /usr/include/boost /tmp/boost-headers/boost
 
-      - name: 安装 CMake 4.0.0
+      - name: Install CMake 4.0
         run: |
           curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
           sudo bash cmake.sh --prefix=/usr/local --skip-license
           cmake --version
 
+      # Standalone LLVM: the compiler. Provides clang++ with C++26 support and,
+      # crucially, libc++ std.cppm + libc++.modules.json for `import std`.
+      - name: Install standalone LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          set -eux
+          LLVM_DIR=/opt/llvm
+          sudo mkdir -p "$LLVM_DIR"
+          URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz"
+          curl -fsSL "$URL" -o llvm.tar.xz
+          sudo tar -xf llvm.tar.xz -C "$LLVM_DIR" --strip-components=1
+          echo "LLVM_DIR=$LLVM_DIR" >> "$GITHUB_ENV"
+          "$LLVM_DIR/bin/clang++" --version
+
+      - name: Setup Android NDK
+        run: |
+          set -eux
+          NDK_ROOT=/tmp/android-ndk
+          mkdir -p "$NDK_ROOT"
+          curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" -o ndk.zip
+          unzip -q ndk.zip -d /tmp
+          mv /tmp/android-ndk-*/* "$NDK_ROOT"
+          echo "ANDROID_NDK_HOME=$NDK_ROOT" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
       - uses: pnpm/action-setup@v5
-      - name: 安装 npm 依赖并编译 TypeScript
+
+      - name: Install npm deps and build TypeScript
         run: |
+          set -eux
+          echo "$GITHUB_WORKSPACE/packages/auto_js/js/cmake" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/scripts" >> "$GITHUB_PATH"
           pnpm install --frozen-lockfile
           npx tsc -b
 
-      - name: 下载并配置 Android NDK (r29)
+      # Headers only: `scripts/nodejs_select` also fetches Windows node.lib files
+      # we don't need for an Android cross build, so fetch the headers tarball
+      # directly.
+      - name: Download Node.js headers
         run: |
-          mkdir -p $ANDROID_NDK_HOME
-          curl -fsSL https://dl.google.com/android/repository/android-ndk-$ANDROID_NDK_VERSION-linux.zip -o ndk.zip
-          unzip -q ndk.zip -d /tmp
-          mv /tmp/android-ndk-*/* $ANDROID_NDK_HOME
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          set -eux
+          mkdir -p "deps/nodejs/${NODE_HEADERS}"
+          curl -fsSL "https://nodejs.org/download/release/v${NODE_HEADERS}/node-v${NODE_HEADERS}-headers.tar.gz" | \
+            tar xz --strip-components=1 -C "deps/nodejs/${NODE_HEADERS}"
+          test -f "deps/nodejs/${NODE_HEADERS}/include/node/v8.h"
 
-      - name: 安装 Playwright
-        run: pnpm add -D -w playwright
-
-      - name: 安装 Playwright 浏览器
-        run: npx playwright install chromium
-
-      - name: 下载 Javet SO (headless)
-        continue-on-error: true
+      # Javet's node .so is monolithic; Node headers do not ship v8-gn.h. The
+      # ABI macros it would carry (pointer compression / sandbox / direct-handle)
+      # are all OFF for a stock Node build, so an empty file is the correct and
+      # complete ABI configuration.
+      - name: Create empty v8-gn.h
         run: |
-          cat > download.cjs << 'SCRIPT_END'
-          const { chromium } = require('playwright');
-          (async () => {
-            const browser = await chromium.launch();
-            const page = await browser.newPage();
-            const url = process.env.DOWNLOAD_URL;
-            try {
-              const [download] = await Promise.all([
-                page.waitForEvent('download', { timeout: 60000 }),
-                page.goto(url, { waitUntil: 'networkidle' })
-              ]);
-              await download.saveAs('deps/javet/' + process.env.JAVET_SO_NAME);
-              console.log('下载成功');
-            } catch (e) {
-              console.error('下载失败，继续构建:', e.message);
-            } finally {
-              await browser.close();
-            }
-          })()
-          SCRIPT_END
+          set -eux
+          echo "#pragma once" > "deps/nodejs/${NODE_HEADERS}/include/node/v8-gn.h"
+
+      # Unpack the Javet .so from the tracked 7z archive and expose it to the
+      # linker under a `-l`-friendly name. The real file keeps its SONAME
+      # (libjavet-node-android-i18n.v.5.0.10.so), which is what gets recorded as
+      # DT_NEEDED, so a plain `libjavet.so` symlink is only used at link time.
+      - name: Unpack and stage Javet .so
+        run: |
+          set -eux
+          7z x libs.7z -olibs -y
+          case "$ABI" in
+            arm64-v8a) SRC="libs/arm64-v8a/${JAVET_SO_NAME}" ;;
+            x86_64)    SRC="libs/x86_64/${JAVET_SO_NAME}" ;;
+          esac
+          test -f "$SRC"
           mkdir -p deps/javet
-          node download.cjs
+          cp "$SRC" "deps/javet/${JAVET_SO_NAME}"
+          ln -sf "${JAVET_SO_NAME}" "deps/javet/libjavet.so"
+          ls -l deps/javet
+
+      # `import std` support. This is the single highest-risk step of the whole
+      # port, because of an ABI constraint:
+      #
+      #   The NDK's libc++ uses the inline namespace `std::__ndk1::` (see
+      #   __config_site: _LIBCPP_ABI_NAMESPACE = __ndk1), NOT upstream's `std::__1::`.
+      #   The Javet .so is linked against the NDK's libc++_shared, so every V8 API
+      #   that passes a std type across the boundary has `__ndk1` in its mangled
+      #   name. We therefore MUST compile isolated-vm against the NDK's libc++
+      #   headers (already enforced via CMAKE_SYSROOT), and the `std` module must
+      #   be built from those same headers so it lands in `__ndk1` too.
+      #
+      # The `std` module *source* (std.cppm) is just a list of `export using
+      # std::x;` re-exports. Its symbol list must match the libc++ header version,
+      # or `export using` will name symbols the headers don't provide. NDK r27's
+      # libc++ tracks LLVM ~18, so we fetch libc++ 18.1.8's std.cppm (NOT the
+      # compiler's own v20 copy). The namespace still comes from the NDK headers
+      # at compile time, so `import std` resolves into `std::__ndk1::`.
+      #
+      # The resulting libc++.modules.json is handed to CMake via
+      # CMAKE_CXX_STDLIB_MODULES_JSON (same mechanism as ECO_STD on Win/mac).
+      - name: Prepare `import std` module manifest
+        id: import_std
         env:
-          DOWNLOAD_URL: ${{ matrix.download_url }}
-          JAVET_SO_NAME: ${{ env.JAVET_SO_NAME }}
-
-      - name: 下载 Node.js 头文件
+          LIBCXX_STD_VERSION: "18.1.8"
         run: |
-          if [ -f scripts/nodejs_select ]; then
-            bash scripts/nodejs_select "deps/nodejs/${{ env.NODE_HEADERS }}"
-          else
-            mkdir -p deps/nodejs
-            curl -fsSL https://nodejs.org/download/release/v${{ env.NODE_HEADERS }}/node-v${{ env.NODE_HEADERS }}.tar.gz | tar -xz -C deps/nodejs --strip-components=1
-          fi
+          set -eux
+          mkdir -p /tmp/std-module
+          BASE="https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-${LIBCXX_STD_VERSION}/libcxx/modules"
+          curl -fsSL "${BASE}/std.cppm.in" -o /tmp/std-module/std.cppm
+          curl -fsSL "${BASE}/std.compat.cppm.in" -o /tmp/std-module/std.compat.cppm
+          # The .in templates contain exactly one CMake substitution each:
+          # `@LIBCXX_MODULE_STD_INCLUDE_SOURCES@` (and the .compat equivalent),
+          # which upstream's build uses to inject extra `#include` lines. It is
+          # NOT a boolean guard, so it must be removed (emptied), not set to 1 --
+          # replacing it with `1` would inject stray tokens and break the module.
+          # Every other conditional (`_LIBCPP_HAS_NO_*`) is a real macro supplied
+          # by the NDK's <__config>, so we leave those to the preprocessor.
+          # Verified locally: NDK r27 clang + NDK libc++ headers + libc++ 18.1.8
+          # std.cppm emits a valid std module this way.
+          sed -i -E 's/@[A-Za-z0-9_]+@//g' /tmp/std-module/std.cppm /tmp/std-module/std.compat.cppm
 
-      - name: 将 Node 头文件复制到各子包预期位置
-        run: |
-          mkdir -p packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/
-          mkdir -p packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}
-          cp -r deps/nodejs/${{ env.NODE_HEADERS }}/* packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/
+          cat > /tmp/std-module/libc++.modules.json <<JSON
+          {
+            "version": 1,
+            "revision": 1,
+            "modules": [
+              {
+                "logical-name": "std",
+                "source-path": "/tmp/std-module/std.cppm",
+                "is-std-library": true
+              },
+              {
+                "logical-name": "std.compat",
+                "source-path": "/tmp/std-module/std.compat.cppm",
+                "is-std-library": true
+              }
+            ]
+          }
+          JSON
+          echo "json=/tmp/std-module/libc++.modules.json" >> "$GITHUB_OUTPUT"
 
-      - name: 准备 V8 头文件（补全缺失的 v8-gn.h）
+      # Custom toolchain: standalone clang as compiler, NDK as sysroot only.
+      - name: Write Android toolchain file
         run: |
-          touch deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
-          touch packages/third_party/nodejs/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
-          touch packages/third_party/v8/deps/nodejs/${{ env.NODE_HEADERS }}/include/node/v8-gn.h
+          set -eux
+          # Generic Linux cross-compile driven entirely by an explicit
+          # --target=<triplet><api> triple. We deliberately do NOT use
+          # CMAKE_SYSTEM_NAME=Android: that engages CMake's built-in NDK layout
+          # assumptions, which don't hold for a standalone (non-NDK) clang. With
+          # SYSTEM_NAME=Linux the project's `if(LINUX)` paths (e.g. --gc-sections)
+          # stay active, while the clang driver still keys off the android triple
+          # to define __ANDROID__ / V8_OS_ANDROID and pick the Android ABI.
+          cat > /tmp/android-standalone.toolchain.cmake <<EOF
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR ${ABI})
 
-      - name: 移除不兼容的 CMake 属性和平台限制
-        run: |
-          find . -name "CMakeLists.txt" -exec sed -i '/LINKER_TYPE/d' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/CXX_MODULE_STD/d' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/Unknown host platform/s/^/#/' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/Unsupported API/s/^/#/' {} \;
-          find . -name "CMakeLists.txt" -exec sed -i '/message(FATAL_ERROR "Unknown host platform")/s/^/#/' {} \;
+          set(_ndk "\$ENV{ANDROID_NDK_HOME}")
+          set(_sysroot "\${_ndk}/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
+          set(_llvm "\$ENV{LLVM_DIR}")
+          set(_triple ${TRIPLET}${ANDROID_API})
 
-      - name: 配置 CMake
-        shell: bash
+          set(CMAKE_C_COMPILER "\${_llvm}/bin/clang")
+          set(CMAKE_CXX_COMPILER "\${_llvm}/bin/clang++")
+          set(CMAKE_C_COMPILER_TARGET "\${_triple}")
+          set(CMAKE_CXX_COMPILER_TARGET "\${_triple}")
+          set(CMAKE_SYSROOT "\${_sysroot}")
+
+          # Use the NDK's libc++ headers so the std module and ABI match the
+          # libc++_shared runtime the Javet .so was linked against, and link
+          # libc++ dynamically. libc++_shared.so lives at
+          #   <sysroot>/usr/lib/<triplet>/libc++_shared.so
+          add_compile_options(-stdlib=libc++)
+          add_link_options(-stdlib=libc++)
+          link_directories("\${_sysroot}/usr/lib/${TRIPLET}")
+          link_libraries(c++_shared)
+
+          set(CMAKE_FIND_ROOT_PATH "\${_sysroot}")
+          # PROGRAM NEVER: use host tools (node, sh) for the npm resolver.
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          # LIBRARY ONLY: never pick up host .so's; link only against the
+          # sysroot + our explicitly-staged Javet .so.
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          # INCLUDE/PACKAGE BOTH: the Boost header shim and its BoostConfig live
+          # on the host side (outside the sysroot). ONLY would re-root the search
+          # into the sysroot and hide -DBoost_DIR=/tmp/fake-boost, breaking
+          # find_package(Boost). Header-only Boost carries no ABI, so host
+          # headers are safe here.
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+          EOF
+          cat /tmp/android-standalone.toolchain.cmake
+
+      # Minimal Boost package shim so find_package(Boost) resolves to the staged
+      # header-only tree without pulling host libraries.
+      - name: Write Boost shim
         run: |
-          mkdir -p fake-boost/lib/cmake/Boost
-          cat > fake-boost/lib/cmake/Boost/BoostConfig.cmake << 'BOOST_EOF'
+          set -eux
+          mkdir -p /tmp/fake-boost/lib/cmake/Boost
+          cat > /tmp/fake-boost/lib/cmake/Boost/BoostConfig.cmake <<'EOF'
           add_library(Boost::boost INTERFACE IMPORTED)
           set_target_properties(Boost::boost PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
-          )
+            INTERFACE_INCLUDE_DIRECTORIES "/tmp/boost-headers")
           set(Boost_FOUND TRUE)
-          set(Boost_INCLUDE_DIRS /usr/include)
+          set(Boost_INCLUDE_DIRS /tmp/boost-headers)
           set(Boost_LIBRARIES "")
           set(Boost_VERSION 1.83.0)
-          BOOST_EOF
-          cat > fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake << 'BOOST_VER_EOF'
+          EOF
+          cat > /tmp/fake-boost/lib/cmake/Boost/BoostConfigVersion.cmake <<'EOF'
           set(PACKAGE_VERSION 1.83.0)
           set(PACKAGE_VERSION_COMPATIBLE TRUE)
-          BOOST_VER_EOF
+          EOF
 
-          mkdir -p "${PWD}/build/module_cache"
-
-          cat > ./custom.android.toolchain.cmake << 'NDK_EOF'
-          include($ENV{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake)
-          set(CMAKE_LINKER_TYPE DEFAULT CACHE STRING "" FORCE)
-          set(ANDROID_STL c++_shared)
-          set(CMAKE_LINKER "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" CACHE FILEPATH "" FORCE)
-          set(CMAKE_CXX_SCAN_FOR_MODULES ON CACHE BOOL "Enable C++20 module scanning" FORCE)
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem /tmp/host-boost-headers" CACHE STRING "" FORCE)
-          NDK_EOF
-
-          AUTO_JS_PATH=$(npm exec auto_js_cmake_include)
-          V8_INCLUDE_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
-
+      - name: Configure
+        env:
+          NODE_DIST_DIR: deps/nodejs/${{ env.NODE_HEADERS }}
+        run: |
+          set -eux
+          NODE_INC="${PWD}/deps/nodejs/${NODE_HEADERS}/include/node"
           cmake \
             -S "${PWD}" \
             -B "${PWD}/build" \
-            -DCMAKE_MODULE_PATH="${AUTO_JS_PATH}" \
-            -DCMAKE_TOOLCHAIN_FILE="${PWD}/custom.android.toolchain.cmake" \
-            -DANDROID_ABI="${{ matrix.abi }}" \
-            -DANDROID_PLATFORM="android-${{ matrix.ndk_api }}" \
-            -DANDROID_STL=c++_shared \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_MAKE_PROGRAM=ninja \
-            -DCMAKE_PREFIX_PATH="${PWD}/fake-boost" \
-            -DBoost_DIR="${PWD}/fake-boost/lib/cmake/Boost" \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
+            -DCMAKE_TOOLCHAIN_FILE=/tmp/android-standalone.toolchain.cmake \
+            -DCMAKE_MODULE_PATH="$(pnpm exec auto_js_cmake_include)" \
+            -DCMAKE_PREFIX_PATH=/tmp/fake-boost \
+            -DBoost_DIR=/tmp/fake-boost/lib/cmake/Boost \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON="${{ steps.import_std.outputs.json }}" \
+            -DNODE_DIST_DIR="deps/nodejs/${NODE_HEADERS}" \
             -DV8_LIBRARY_TYPE=shared \
-            -DV8_INCLUDE_DIR="${V8_INCLUDE_DIR}" \
-            -DV8_INCLUDE_GN_FILE="${V8_INCLUDE_DIR}/v8-gn.h" \
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
-            -DNODE_DIST_DIR="deps/nodejs/${{ env.NODE_HEADERS }}" \
-            -DIVM_INSTALL=copy \
-            -G Ninja
+            -DV8_INCLUDE_DIR="${NODE_INC}" \
+            -DV8_INCLUDE_GN_FILE="${NODE_INC}/v8-gn.h" \
+            -DV8_SHARED_LIBS=javet \
+            -DV8_TRICKSHOT= \
+            -DIVM_INSTALL=artifacts
 
-      - name: 修复源码（补全所有缺失的分区导入）
-        shell: bash
-        run: |
-          echo "修复源码: 强制修正所有 module 文件并补全 import 语句..."
-          find packages -name '*.cc' -exec sed -i '/^import std;$/d' {} \;
-          NDK_CXX_HEADERS="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
-          mkdir -p "${NDK_CXX_HEADERS}/bits"
-          cat > "${NDK_CXX_HEADERS}/bits/stdc++.h" << 'STD_HEADER'
-          #include <cstdlib>
-          #include <cstdint>
-          #include <cstddef>
-          #include <cstring>
-          #include <cwchar>
-          #include <cstdio>
-          #include <cassert>
-          #include <algorithm>
-          #include <array>
-          #include <chrono>
-          #include <concepts>
-          #include <condition_variable>
-          #include <deque>
-          #include <exception>
-          #include <forward_list>
-          #include <functional>
-          #include <initializer_list>
-          #include <iomanip>
-          #include <iostream>
-          #include <iterator>
-          #include <limits>
-          #include <list>
-          #include <map>
-          #include <memory>
-          #include <mutex>
-          #include <new>
-          #include <numeric>
-          #include <optional>
-          #include <queue>
-          #include <random>
-          #include <ratio>
-          #include <set>
-          #include <shared_mutex>
-          #include <span>
-          #include <sstream>
-          #include <stack>
-          #include <stdexcept>
-          #include <stop_token>
-          #include <string>
-          #include <string_view>
-          #include <source_location>
-          #include <tuple>
-          #include <type_traits>
-          #include <unordered_map>
-          #include <unordered_set>
-          #include <utility>
-          #include <variant>
-          #include <vector>
-          #include <cmath>
-          #include <compare>
-          #include <ranges>
-          #include <bit>
-          #include <version>
-          STD_HEADER
-          sed -i -E '/auto[[:space:]]*\[\.\.\.[[:space:]]*args[[:space:]]*\][[:space:]]*=[[:space:]]*std::move\(args_\);/d' packages/utility/functional/elide.cc
-          sed -i 's/std::move(args)\.\.\./std::forward<Args>(args_).../g' packages/utility/functional/elide.cc
-          for f in $(grep -rl 'module util' packages/); do
-            sed -i '/^#include <bits\/stdc++.h>$/d' "$f"
-            sed -i '/^module;$/d' "$f"
-            sed -i '1i\module;' "$f"
-            sed -i '2i\#include <bits/stdc++.h>' "$f"
-          done
-
-          # regular_return.cc 和 bind.cc 需要 type_traits.transform
-          for file in packages/utility/functional/regular_return.cc packages/utility/functional/bind.cc; do
-            sed -i '/^import :type_traits\.transform;$/d' "$file"
-            sed -i '/^export module util:functional\.\(regular_return\|bind\);$/a\import :type_traits.transform;' "$file"
-          done
-          # bind.cc 额外需要 function_traits 和 type_traits 聚合分区
-          sed -i '/^export module util:functional\.bind;$/a\import :type_traits.function_traits;' packages/utility/functional/bind.cc
-          sed -i '/^export module util:functional\.bind;$/a\import :type_traits;' packages/utility/functional/bind.cc
-
-          # lockable.cc 需要 type_traits.type_of 和 utility
-          sed -i '/^export module util:platform\.lockable;$/a\import :type_traits.type_of;' packages/utility/platform/lockable.cc
-
-          # stop_token.cc 需要 functional（可能已有，但确认一下）
-          sed -i '/^export module util:platform\.stop_token;$/a\import :functional;' packages/utility/platform/stop_token.cc
-
-          # timer.cc 需要 functional 和 lockable
-          sed -i '/^export module util:platform\.timer;$/a\import :functional;' packages/utility/platform/timer.cc
-          sed -i '/^export module util:platform\.timer;$/a\import :platform.lockable;' packages/utility/platform/timer.cc
-
-          # container/sealed_map.cc 可能需要 functional 等，但之前已处理
-
-      - name: 清理 ninja 中的不兼容标志
-        run: |
-          find build -name '*.ninja' -exec sed -i 's/-fno-modules-reduced-bmi//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-include-angled-in-module-purview//g' {} \;
-          find build -name '*.ninja' -exec sed -i 's/-Wno-reserved-module-identifier//g' {} \;
-
-      - name: 完整编译 utility 模块（全量传递所有已编译 PCM）
-        working-directory: ${{ github.workspace }}
-        shell: python3 {0}
-        run: |
-          import os, subprocess
-
-          SRC_ROOT = os.getcwd()
-          BUILD_DIR = os.path.join(SRC_ROOT, "build")
-          NDK_HOME = "/tmp/android-ndk"
-          CLANGXX = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
-          TARGET = "${{ matrix.triplet }}${{ matrix.ndk_api }}"
-          SYSROOT = NDK_HOME + "/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-
-          BASE_FLAGS = f"--target={TARGET} --sysroot={SYSROOT} -std=gnu++26 -fPIC -fvisibility=hidden " \
-                       f"-isystem /tmp/host-boost-headers -isystem {SRC_ROOT}/packages/utility/include " \
-                       f"-DEXPORT_IS_EXPORT -O3 -DNDEBUG"
-
-          UTIL_DIR = os.path.join(SRC_ROOT, "packages/utility")
-          PCM_DIR = os.path.join(BUILD_DIR, "_npm/@auto_js/utility/CMakeFiles/utility_js.dir")
-          os.makedirs(PCM_DIR, exist_ok=True)
-
-          compiled = {}
-
-          def cc(rel, part=None):
-              src = os.path.join(UTIL_DIR, rel)
-              # 如果没有 part，说明是普通文件，不生成 PCM
-              pcm = os.path.join(PCM_DIR, f"util-{part}.pcm") if part else None
-              obj = os.path.join(PCM_DIR, os.path.relpath(src, UTIL_DIR).replace("/", ".").replace(".cc", ".o"))
-
-              extra = []
-              for name, path in compiled.items():
-                  extra.append(f"-fmodule-file=util:{name}={path}")
-
-              # 模块接口才生成 PCM
-              if pcm:
-                  cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", src, "-o", pcm] + extra
-                  print(f"PCM: {part}")
-                  subprocess.run(cmd, check=True)
-                  compiled[part] = pcm
-
-              # 普通编译
-              cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", src, "-o", obj] + extra
-              print(f"OBJ: {os.path.relpath(src, UTIL_DIR)}")
-              subprocess.run(cmd, check=True)
-
-          # 精确编译顺序（除 timer.cc 外）
-          cc("type_traits/transform.cc", "type_traits.transform")
-          cc("type_traits/type_of.cc", "type_traits.type_of")
-          cc("functional/elide.cc", "functional.elide")
-          cc("functional/flat_tuple.cc", "functional.flat_tuple")
-          cc("memory/comparator.cc", "memory.comparator")
-          cc("memory/noinit_allocator.cc", "memory.noinit_allocator")
-          cc("container/mutable_priority_queue.cc", "container.mutable_priority_queue")
-          cc("container/segmented_priority_queue.cc", "container.segmented_priority_queue")
-          cc("container/tinker_queue.cc", "container.tinker_queue")
-          cc("utility/constant_wrapper.cc", "utility.constant_wrapper")
-          cc("utility/facade.cc", "utility.facade")
-          cc("utility/hash.cc", "utility.hash")
-          cc("utility/ranges.cc", "utility.ranges")
-          cc("platform/timer.h.cc", "platform.timer")
-          cc("type_traits/type_pack.cc", "type_traits.type_pack")
-          cc("type_traits/function_traits.cc", "type_traits.function_traits")
-          cc("utility/string.cc", "utility.string")
-          cc("type_traits/type_traits.cc", "type_traits")
-          cc("utility/covariant_value.cc", "utility.covariant_value")
-          cc("utility/utility.cc", "utility")
-          cc("memory/autorelease_pool.cc", "memory.autorelease_pool")
-          cc("memory/memory.cc", "memory")
-          cc("functional/function_ref.cc", "functional.function_ref")
-          cc("functional/function_constant.cc", "functional.function_constant")
-          cc("functional/regular_return.cc", "functional.regular_return")
-          cc("functional/bind.cc", "functional.bind")
-          cc("functional/functional.cc", "functional")
-          cc("platform/lockable.cc", "platform.lockable")
-          cc("platform/timer.cc", "platform.timer")
-          cc("platform/stop_token.cc", "platform.stop_token")
-          cc("container/sealed_map.cc", "container.sealed_map")
-
-          # 普通文件：timer.cc（不生成 PCM）
-          cc("platform/timer.cc")
-
-          main_pcm = os.path.join(PCM_DIR, "util.pcm")
-          cmd = [CLANGXX] + BASE_FLAGS.split() + ["-c", "-Xclang", "-emit-module-interface", os.path.join(UTIL_DIR, "_module.cc"), "-o", main_pcm]
-          for pname, ppath in compiled.items():
-              cmd.append(f"-fmodule-file=util:{pname}={ppath}")
-          print("主模块 PCM: util")
-          subprocess.run(cmd, check=True)
-
-          print("utility 模块编译完成")
-
-      - name: 构建最终目标
+      - name: Build
         run: ninja -C build backend_napi_v8
 
-      - name: 验证产物
+      - name: Inspect artifact
         if: success()
         run: |
-          ls -lh build/packages/backend_napi_v8/
-          file build/packages/backend_napi_v8/backend_napi_v8.node
+          set -eux
+          find build -name '*.node' -exec ls -lh {} \;
+          NODE_FILE=$(find build -name '*.node' | head -n1)
+          "$LLVM_DIR/bin/llvm-readelf" -d "$NODE_FILE" | grep -E 'NEEDED|SONAME' || true
 
       - uses: actions/upload-artifact@v6
         if: success()
