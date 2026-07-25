@@ -252,30 +252,38 @@ jobs:
           }
           JSON
 
-          # Install the json where CMake's detection will look for it. CMake runs
-          # `clang++ --target=<triple><api> -print-file-name=libc++.modules.json`
-          # and checks whether that path exists. -print-file-name returns an
-          # absolute path when the file exists in a lib search dir, but echoes the
-          # bare name unchanged when it does not -- so we cannot rely on its output
-          # for the destination. Instead we resolve a sibling file that always
-          # exists (libc++.a) to discover the real per-target lib dir, then drop
-          # our json next to it. We do this for every lib dir clang reports.
-          TRIPLE="${TRIPLET}${ANDROID_API}"
+          # Install the json where CMake's detection will look for it.
+          #
+          # CRITICAL: CMake 4.0 runs the probe as a BARE call with NO --target:
+          #   ${CMAKE_CXX_COMPILER} -print-file-name=libc++.modules.json
+          # (confirmed from Compiler/Clang-CXX-CXXImportStd.cmake). So it resolves
+          # against clang's DEFAULT (host) lib dir, not the Android target dir.
+          # We therefore must install our json at the host location too.
+          #
+          # The standalone LLVM ships its own host libc++.modules.json (pointing at
+          # its v20 std.cppm). We OVERWRITE it with ours (pointing at libc++ 18.1.8
+          # std.cppm) because at *compile* time we force the NDK's libc++ 18 headers
+          # (__ndk1) via the toolchain; the std module source must match those
+          # headers, not LLVM 20's. The JSON only feeds CMake a source-path; the
+          # actual namespace/ABI comes from the headers used during compilation.
           for CC in "${LLVM_DIR}/bin/clang" "${LLVM_DIR}/bin/clang++"; do
-            # Anchor: an existing library resolves to an absolute path in the lib dir.
-            ANCHOR="$("${CC}" --target="${TRIPLE}" -print-file-name=libc++.a)"
-            if [ "${ANCHOR}" = "libc++.a" ]; then
-              # Fell back to bare name (not found) -> use the resource lib dir.
-              ANCHOR="$("${CC}" --target="${TRIPLE}" -print-resource-dir)/lib/libc++.a"
+            # Bare call (no --target) -- exactly what CMake's detection does.
+            RESOLVED="$("${CC}" -print-file-name=libc++.modules.json)"
+            if [ "${RESOLVED}" = "libc++.modules.json" ]; then
+              # Not found anywhere: fall back to the host lib dir via libc++.a.
+              ANCHOR="$("${CC}" -print-file-name=libc++.a)"
+              if [ "${ANCHOR}" = "libc++.a" ]; then
+                ANCHOR="$("${CC}" -print-resource-dir)/lib/libc++.a"
+              fi
+              RESOLVED="$(dirname "${ANCHOR}")/libc++.modules.json"
             fi
-            DEST_DIR="$(dirname "${ANCHOR}")"
-            mkdir -p "${DEST_DIR}"
-            cp /tmp/std-module/libc++.modules.json "${DEST_DIR}/libc++.modules.json"
-            echo "Installed modules.json -> ${DEST_DIR}/libc++.modules.json"
-            # Verify clang now resolves the manifest to an existing absolute path.
-            RESOLVED="$("${CC}" --target="${TRIPLE}" -print-file-name=libc++.modules.json)"
-            echo "clang resolves libc++.modules.json -> ${RESOLVED}"
-            test -f "${RESOLVED}" || echo "WARN: ${CC} still does not resolve modules.json to an existing file"
+            mkdir -p "$(dirname "${RESOLVED}")"
+            cp /tmp/std-module/libc++.modules.json "${RESOLVED}"
+            echo "Installed modules.json -> ${RESOLVED}"
+            # Re-run the exact bare probe and confirm it now resolves to a real file.
+            CHECK="$("${CC}" -print-file-name=libc++.modules.json)"
+            echo "clang (bare) resolves libc++.modules.json -> ${CHECK}"
+            test -f "${CHECK}" || echo "WARN: ${CC} still does not resolve modules.json to an existing file"
           done
           echo "json=/tmp/std-module/libc++.modules.json" >> "$GITHUB_OUTPUT"
 
