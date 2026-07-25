@@ -185,25 +185,32 @@ jobs:
           ls -l deps/javet
 
       # `import std` support. This is the single highest-risk step of the whole
-      # port, because of an ABI constraint:
+      # port. Two facts drive the implementation:
       #
-      #   The NDK's libc++ uses the inline namespace `std::__ndk1::` (see
-      #   __config_site: _LIBCPP_ABI_NAMESPACE = __ndk1), NOT upstream's `std::__1::`.
-      #   The Javet .so is linked against the NDK's libc++_shared, so every V8 API
-      #   that passes a std type across the boundary has `__ndk1` in its mangled
-      #   name. We therefore MUST compile isolated-vm against the NDK's libc++
-      #   headers (already enforced via CMAKE_SYSROOT), and the `std` module must
-      #   be built from those same headers so it lands in `__ndk1` too.
+      # 1) ABI namespace. The NDK's libc++ uses the inline namespace
+      #    `std::__ndk1::` (see __config_site: _LIBCPP_ABI_NAMESPACE = __ndk1),
+      #    NOT upstream's `std::__1::`. The Javet .so is linked against the NDK's
+      #    libc++_shared, so every V8 API that passes a std type across the
+      #    boundary has `__ndk1` in its mangled name. We therefore compile against
+      #    the NDK's libc++ headers (enforced via CMAKE_SYSROOT); the `std` module
+      #    is built from those same headers at configure time, landing in __ndk1.
       #
-      # The `std` module *source* (std.cppm) is just a list of `export using
-      # std::x;` re-exports. Its symbol list must match the libc++ header version,
-      # or `export using` will name symbols the headers don't provide. NDK r27's
-      # libc++ tracks LLVM ~18, so we fetch libc++ 18.1.8's std.cppm (NOT the
-      # compiler's own v20 copy). The namespace still comes from the NDK headers
-      # at compile time, so `import std` resolves into `std::__ndk1::`.
+      # 2) How CMake 4.0 finds the std module. Contrary to earlier assumptions,
+      #    CMake 4.0 does NOT read a -DCMAKE_CXX_STDLIB_MODULES_JSON variable for
+      #    Clang. Instead (Compiler/Clang-CXX-CXXImportStd.cmake) it runs:
+      #        clang++ <target> -print-file-name=libc++.modules.json
+      #    and requires the returned path to EXIST. It then parses that json and
+      #    builds the `std` module from the std.cppm it points at. The standalone
+      #    LLVM ships this json only for its host triple, so for an Android target
+      #    the path comes back non-existent and CMake declares import std
+      #    unsupported (no __CMAKE::CXX26 target -> every CXX_MODULE_STD target
+      #    errors). The fix is to place our own libc++.modules.json at exactly the
+      #    location `-print-file-name` resolves to for the Android target.
       #
-      # The resulting libc++.modules.json is handed to CMake via
-      # CMAKE_CXX_STDLIB_MODULES_JSON (same mechanism as ECO_STD on Win/mac).
+      # The `std` module *source* (std.cppm) is a list of `export using std::x;`
+      # re-exports; its symbol list must match the libc++ header version or
+      # `export using` names symbols the headers lack. NDK r27's libc++ tracks
+      # LLVM ~18, so we use libc++ 18.1.8's std.cppm (NOT the compiler's v20 copy).
       - name: Prepare `import std` module manifest
         id: import_std
         env:
@@ -225,6 +232,7 @@ jobs:
           # std.cppm emits a valid std module this way.
           sed -i -E 's/@[A-Za-z0-9_]+@//g' /tmp/std-module/std.cppm /tmp/std-module/std.compat.cppm
 
+          # A modules.json whose source-paths point at the std.cppm we just staged.
           cat > /tmp/std-module/libc++.modules.json <<JSON
           {
             "version": 1,
@@ -243,6 +251,32 @@ jobs:
             ]
           }
           JSON
+
+          # Install the json where CMake's detection will look for it. CMake runs
+          # `clang++ --target=<triple><api> -print-file-name=libc++.modules.json`
+          # and checks whether that path exists. -print-file-name returns an
+          # absolute path when the file exists in a lib search dir, but echoes the
+          # bare name unchanged when it does not -- so we cannot rely on its output
+          # for the destination. Instead we resolve a sibling file that always
+          # exists (libc++.a) to discover the real per-target lib dir, then drop
+          # our json next to it. We do this for every lib dir clang reports.
+          TRIPLE="${TRIPLET}${ANDROID_API}"
+          for CC in "${LLVM_DIR}/bin/clang" "${LLVM_DIR}/bin/clang++"; do
+            # Anchor: an existing library resolves to an absolute path in the lib dir.
+            ANCHOR="$("${CC}" --target="${TRIPLE}" -print-file-name=libc++.a)"
+            if [ "${ANCHOR}" = "libc++.a" ]; then
+              # Fell back to bare name (not found) -> use the resource lib dir.
+              ANCHOR="$("${CC}" --target="${TRIPLE}" -print-resource-dir)/lib/libc++.a"
+            fi
+            DEST_DIR="$(dirname "${ANCHOR}")"
+            mkdir -p "${DEST_DIR}"
+            cp /tmp/std-module/libc++.modules.json "${DEST_DIR}/libc++.modules.json"
+            echo "Installed modules.json -> ${DEST_DIR}/libc++.modules.json"
+            # Verify clang now resolves the manifest to an existing absolute path.
+            RESOLVED="$("${CC}" --target="${TRIPLE}" -print-file-name=libc++.modules.json)"
+            echo "clang resolves libc++.modules.json -> ${RESOLVED}"
+            test -f "${RESOLVED}" || echo "WARN: ${CC} still does not resolve modules.json to an existing file"
+          done
           echo "json=/tmp/std-module/libc++.modules.json" >> "$GITHUB_OUTPUT"
 
       # Custom toolchain: standalone clang as compiler, NDK as sysroot only.
@@ -342,7 +376,6 @@ jobs:
             -DCMAKE_MODULE_PATH="$(pnpm exec auto_js_cmake_include)" \
             -DCMAKE_PREFIX_PATH=/tmp/fake-boost \
             -DBoost_DIR=/tmp/fake-boost/lib/cmake/Boost \
-            -DCMAKE_CXX_STDLIB_MODULES_JSON="${{ steps.import_std.outputs.json }}" \
             -DNODE_DIST_DIR="deps/nodejs/${NODE_HEADERS}" \
             -DV8_LIBRARY_TYPE=shared \
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
