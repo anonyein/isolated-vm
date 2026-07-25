@@ -32,7 +32,11 @@ env:
   NODE_HEADERS: 24.18.0
   # Standalone LLVM release used as the cross compiler. Must support C++26 and
   # ship std.cppm + libc++.modules.json.
-  LLVM_VERSION: "20.1.8"
+  # The project sources target clang 22 (see comments in utility/**.cc). clang's
+  # `import std` consumption is only complete enough on 22+: on 20 many modules
+  # fail with "missing '#include <...>'; 'X' must be declared before it is used"
+  # because import std does not surface all names. 22.1.0 matches upstream.
+  LLVM_VERSION: "22.1.0"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
   ANDROID_NDK_VERSION: r27c
