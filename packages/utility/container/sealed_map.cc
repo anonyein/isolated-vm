@@ -12,7 +12,14 @@ export template <class Key, class Type, std::size_t Size>
 class sealed_map {
 	public:
 		using key_type = Key;
-		using value_type = std::pair<const key_type, Type>;
+		// nb: The key is intentionally NOT `const` here. A `std::map`-style
+		// `std::pair<const Key, Type>` triggers a clang frontend segfault while
+		// emitting a module BMI that contains a `sealed_map` specialization: clang
+		// crashes in getCanonicalTemplateArgument canonicalizing the const-qualified
+		// type argument of the pair (seen on clang 20/21/22, arm64+x64 Android). The
+		// map is immutable anyway (values_ is only ever read through const access and
+		// consteval construction), so dropping the key `const` is semantically safe.
+		using value_type = std::pair<key_type, Type>;
 		using container_type = std::array<value_type, Size>;
 
 	private:
