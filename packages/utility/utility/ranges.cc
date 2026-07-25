@@ -3,10 +3,13 @@ module;
 #include <utility>
 export module util:utility.ranges;
 
-#if _LIBCPP_VERSION
 // clang 22.1.0 w/ -stdlib=libc++
 // /workspace/packages/utility/utility/ranges.cc:25:10: error: invalid operands to binary expression [...]
 //    25 |        range | std::views::transform([...]);
+// nb: On libc++ < 22 (e.g. LLVM 20 used for the Android cross build) `operator|`
+// is not a public member of namespace `std::ranges`, so this `using` fails to
+// name it. It is also unnecessary there -- the pipe operator is found via ADL.
+#if _LIBCPP_VERSION >= 220000
 export {
 	using std::ranges::operator|;
 }
