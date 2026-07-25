@@ -231,19 +231,55 @@ jobs:
         run: |
           set -eux
           mkdir -p /tmp/std-module
-          BASE="https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-${LIBCXX_STD_VERSION}/libcxx/modules"
-          curl -fsSL "${BASE}/std.cppm.in" -o /tmp/std-module/std.cppm
-          curl -fsSL "${BASE}/std.compat.cppm.in" -o /tmp/std-module/std.compat.cppm
-          # The .in templates contain exactly one CMake substitution each:
-          # `@LIBCXX_MODULE_STD_INCLUDE_SOURCES@` (and the .compat equivalent),
-          # which upstream's build uses to inject extra `#include` lines. It is
-          # NOT a boolean guard, so it must be removed (emptied), not set to 1 --
-          # replacing it with `1` would inject stray tokens and break the module.
-          # Every other conditional (`_LIBCPP_HAS_NO_*`) is a real macro supplied
-          # by the NDK's <__config>, so we leave those to the preprocessor.
-          # Verified locally: NDK r27 clang + NDK libc++ headers + libc++ 18.1.8
-          # std.cppm emits a valid std module this way.
-          sed -i -E 's/@[A-Za-z0-9_]+@//g' /tmp/std-module/std.cppm /tmp/std-module/std.compat.cppm
+          # Fetch the FULL libc++ modules tree, not just the two .cppm.in files.
+          # The template `std.cppm.in` ends with the placeholder
+          # `@LIBCXX_MODULE_STD_INCLUDE_SOURCES@` which upstream's CMake expands to
+          # a list of `#include "std/<hdr>.inc"` lines -- and it is THOSE .inc files
+          # that carry every `export using std::X;`. Emptying the placeholder (an
+          # earlier mistake) yields a std module that includes all headers but
+          # exports nothing, so consumers see `std::size_t`/`priority_queue`/etc.
+          # as "not declared". We must ship the whole std/ + std.compat/ trees and
+          # reproduce CMake's placeholder expansion.
+          curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LIBCXX_STD_VERSION}/libcxx-${LIBCXX_STD_VERSION}.src.tar.xz" -o /tmp/libcxx.tar.xz
+          mkdir -p /tmp/libcxx-src
+          tar -xf /tmp/libcxx.tar.xz -C /tmp/libcxx-src --strip-components=1
+          cp -r /tmp/libcxx-src/modules/. /tmp/std-module/
+          # Expand each placeholder to the include list over its .inc directory,
+          # mirroring modules/CMakeLists.txt (paths are relative to the .cppm, e.g.
+          # `std/algorithm.inc`). Order follows the sorted directory listing; the
+          # .inc files are self-contained re-export fragments and order-independent.
+          python3 - <<'PY'
+          import pathlib
+          base = pathlib.Path("/tmp/std-module")
+          for stem, subdir, ph in [
+              ("std", "std", "@LIBCXX_MODULE_STD_INCLUDE_SOURCES@"),
+              ("std.compat", "std.compat", "@LIBCXX_MODULE_STD_COMPAT_INCLUDE_SOURCES@"),
+          ]:
+              incs = sorted(p.name for p in (base / subdir).glob("*.inc"))
+              block = "".join(f'#include "{subdir}/{n}"\n' for n in incs)
+              text = (base / f"{stem}.cppm.in").read_text()
+              text = text.replace(ph, block)
+              (base / f"{stem}.cppm").write_text(text)
+              print(f"{stem}.cppm: expanded {len(incs)} includes from {subdir}/")
+
+          # NDK r27's libc++ headers are a trimmed libc++ ~18 that lacks the C++26
+          # saturation arithmetic (`add_sat`/`sub_sat`/`mul_sat`/`div_sat`/
+          # `saturate_cast`). Upstream 18.1.8's numeric.inc re-exports them, so drop
+          # those `export using` lines or the std module fails to build. Verified
+          # locally: NDK clang18 + NDK libc++ headers build the full std module
+          # (~27MB pcm) once these five names are removed.
+          numeric = base / "std" / "numeric.inc"
+          if numeric.exists():
+              kept = [
+                  ln for ln in numeric.read_text().splitlines(keepends=True)
+                  if not any(
+                      f"std::{name}" in ln
+                      for name in ("add_sat", "sub_sat", "mul_sat", "div_sat", "saturate_cast")
+                  )
+              ]
+              numeric.write_text("".join(kept))
+              print("numeric.inc: stripped C++26 saturation re-exports")
+          PY
 
           # A modules.json whose source-paths point at the std.cppm we just staged.
           cat > /tmp/std-module/libc++.modules.json <<JSON
@@ -340,7 +376,15 @@ jobs:
           # never creates the __CMAKE::CXX26 target that every CXX_MODULE_STD
           # target needs. *_FLAGS_INIT are applied during that detection, so we
           # use them to force libc++ early. (add_compile_options is not.)
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++")
+          # -D__BIONIC_CTYPE_INLINE=inline: bionic's <ctype.h> defines isalnum/
+          # isalpha/... as `static __inline` (internal linkage) by default. libc++'s
+          # std module does `export using std::isalnum;`, and C++ forbids exporting
+          # internal-linkage entities, so the std module fails to build against the
+          # NDK sysroot. The macro is `#if !defined`-gated and bionic explicitly
+          # supports overriding it; `inline` gives these functions external linkage
+          # (C++ inline semantics, matching glibc), making them exportable. Applied
+          # to CXX flags so it reaches both CMake's std-module build and every TU.
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ -D__BIONIC_CTYPE_INLINE=inline")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
