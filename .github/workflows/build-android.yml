@@ -33,16 +33,16 @@ env:
   # Standalone LLVM release used as the cross compiler. Must support C++26 and
   # ship std.cppm + libc++.modules.json.
   #
-  # Pinned to 21.1.4. clang 20/21/22 all crash the frontend (segfault in
+  # Pinned to 22.1.0. clang 20/21/22 all crash the frontend (segfault in
   # ASTReader::LoadExternalSpecializations / getCanonicalTemplateArgument) while
-  # emitting the BMI for backend_napi_v8's `environment` module when lazily
-  # deserializing a 25-element std::tuple<string_view...> specialization. That is
-  # NOT a version regression; it is worked around on the source side by using
-  # std::array<string_view,N> instead of std::tuple for the string tables (see
-  # backend_napi_v8/environment.h.cc). 21.1.4 is a known-good C++26/import-std
-  # release; the earlier "missing std:: symbols" motivation for 22 was our own
-  # empty-std-module bug, since fixed, so 21 compiles import std cleanly.
-  LLVM_VERSION: "21.1.4"
+  # emitting the *reduced* BMI for backend_napi_v8's `environment` module: the
+  # reduced-BMI lazy-specialization loader chokes on sealed_map's
+  # std::array<std::pair<string_view, napi::reference<...>>, N> instantiation
+  # (reproduces even at N=7, so it is not a tuple-size issue). The fix is to force
+  # full (non-reduced) BMI via -fno-modules-reduced-bmi, which pre-instantiates
+  # the specializations and avoids the crashing lazy-load path. That flag only
+  # exists on clang 22+, so we must be on 22.x (21 rejects it as unknown).
+  LLVM_VERSION: "22.1.0"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
   ANDROID_NDK_VERSION: r27c
