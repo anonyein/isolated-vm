@@ -2,13 +2,7 @@ message(STATUS "Cmake version: ${CMAKE_VERSION}")
 
 # Mess of `import std` configuration
 cmake_minimum_required(VERSION 4.0.0 FATAL_ERROR)
-# `-fno-modules-reduced-bmi` only exists on newer Clang (21+). Older releases
-# (e.g. the standalone LLVM 20 used for the Android cross build) reject it as an
-# unknown argument, so gate it behind a feature check instead of assuming it.
-include(CheckCXXCompilerFlag)
-check_cxx_compiler_flag(-fno-modules-reduced-bmi HAVE_FNO_MODULES_REDUCED_BMI)
 add_compile_options(
-	$<$<AND:$<CXX_COMPILER_ID:Clang>,$<BOOL:${HAVE_FNO_MODULES_REDUCED_BMI}>>:-fno-modules-reduced-bmi>
 	$<$<CXX_COMPILER_ID:Clang>:-Wno-include-angled-in-module-purview>
 	$<$<CXX_COMPILER_ID:Clang>:-Wno-reserved-module-identifier>
 )
@@ -45,6 +39,16 @@ endif()
 # Project config
 project(isolated_vm LANGUAGES C CXX)
 message(STATUS "C++ Standard Library: ${CMAKE_CXX_STANDARD_LIBRARY}")
+
+# `-fno-modules-reduced-bmi` only exists on newer Clang (21+). Older releases
+# (e.g. the standalone LLVM 20 used for the Android cross build) reject it as an
+# unknown argument. Gate it behind a feature check. Must run after project() so
+# the CXX language is enabled for check_cxx_compiler_flag.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag(-fno-modules-reduced-bmi HAVE_FNO_MODULES_REDUCED_BMI)
+if(HAVE_FNO_MODULES_REDUCED_BMI)
+	add_compile_options($<$<COMPILE_LANG_AND_ID:CXX,Clang>:-fno-modules-reduced-bmi>)
+endif()
 
 # import std;
 set(CMAKE_CXX_MODULE_STD ON)
