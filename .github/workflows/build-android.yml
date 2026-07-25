@@ -102,6 +102,37 @@ jobs:
           mv /tmp/android-ndk-*/* "$NDK_ROOT"
           echo "ANDROID_NDK_HOME=$NDK_ROOT" >> "$GITHUB_ENV"
 
+      # The standalone LLVM only ships host (x86_64-linux-gnu) compiler-rt and
+      # libunwind. Cross-linking for Android needs the Android builtins
+      # (libclang_rt.builtins) and libunwind, which the NDK provides. Copy the
+      # NDK's copies into the exact resource-dir path clang 20 searches, for
+      # each ABI. compiler-rt/libunwind ABIs are stable across these minor LLVM
+      # versions, so NDK's (LLVM 18) archives link fine with LLVM 20 codegen.
+      - name: Supply Android compiler-rt / libunwind to standalone LLVM
+        run: |
+          set -eux
+          NDK_LLVM="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          NDK_RT="${NDK_LLVM}/lib/clang/18/lib/linux"
+
+          # clang 20 reports where it looks for builtins per target.
+          for pair in "aarch64-linux-android24:aarch64:aarch64-unknown-linux-android24" \
+                      "x86_64-linux-android24:x86_64:x86_64-unknown-linux-android24"; do
+            TRIPLE="${pair%%:*}"; rest="${pair#*:}"
+            ARCH="${rest%%:*}"; RTDIR_NAME="${rest#*:}"
+
+            # Path clang 20 wants: <resource>/lib/<triple-normalized>/libclang_rt.builtins.a
+            RES_DIR="$("${LLVM_DIR}/bin/clang" --target="${TRIPLE}" -print-resource-dir)"
+            DEST="${RES_DIR}/lib/${RTDIR_NAME}"
+            mkdir -p "${DEST}"
+            cp "${NDK_RT}/libclang_rt.builtins-${ARCH}-android.a" "${DEST}/libclang_rt.builtins.a"
+
+            # libunwind.a: clang looks for `-l:libunwind.a` on the library path.
+            # Stage it next to the builtins and also expose the arch dir.
+            cp "${NDK_RT}/${ARCH}/libunwind.a" "${DEST}/libunwind.a"
+            echo "Staged runtime for ${TRIPLE} -> ${DEST}"
+            ls -l "${DEST}"
+          done
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
