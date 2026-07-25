@@ -32,11 +32,15 @@ env:
   NODE_HEADERS: 24.18.0
   # Standalone LLVM release used as the cross compiler. Must support C++26 and
   # ship std.cppm + libc++.modules.json.
-  # The project sources target clang 22 (see comments in utility/**.cc). clang's
-  # `import std` consumption is only complete enough on 22+: on 20 many modules
-  # fail with "missing '#include <...>'; 'X' must be declared before it is used"
-  # because import std does not surface all names. 22.1.0 matches upstream.
-  LLVM_VERSION: "22.1.0"
+  #
+  # Pinned to 21.1.4 (not 22.x): clang 22.1.0 segfaults in the frontend while
+  # emitting the BMI for backend_napi_v8's `environment` module - it crashes in
+  # ASTReader::LoadExternalSpecializations / getCanonicalTemplateArgument when
+  # lazily deserializing the 25-element std::tuple<string_view...> specialization
+  # behind napi::string_table. clang 21 does not have this regression. (The
+  # earlier motivation for 22 - missing std:: symbols -- turned out to be our own
+  # empty-std-module bug, since fixed, so 21 compiles import std cleanly too.)
+  LLVM_VERSION: "21.1.4"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
   ANDROID_NDK_VERSION: r27c
