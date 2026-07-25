@@ -73,10 +73,19 @@ jobs:
           mkdir -p /tmp/boost-headers
           cp -r /usr/include/boost /tmp/boost-headers/boost
 
-      - name: Install CMake 4.0
+      # CMake 4.3.x is REQUIRED (not 4.0.x): the project's root CMakeLists.txt
+      # selects the `import std` experimental UUID by CMake version --
+      #   >= 4.3.0 -> 451f2fe2-a8a2-47c3-bc32-94786d8fc91b
+      #   otherwise -> d0edc3af-... (the CMake 3.30-era value)
+      # CMake 4.0.0 actually expects a DIFFERENT UUID (a9e1cf81-...), so with
+      # 4.0.0 the project emits d0edc3af, the gate rejects it, __CMAKE::CXX26 is
+      # never created, and every CXX_MODULE_STD target errors out. 4.3.3's
+      # expected UUID matches the project's >=4.3.0 branch exactly.
+      - name: Install CMake 4.3.3
         run: |
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o cmake.sh
-          sudo bash cmake.sh --prefix=/usr/local --skip-license
+          set -eux
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v4.3.3/cmake-4.3.3-linux-x86_64.tar.gz -o cmake.tgz
+          sudo tar -xf cmake.tgz -C /usr/local --strip-components=1
           cmake --version
 
       # Standalone LLVM: the compiler. Provides clang++ with C++26 support and,
