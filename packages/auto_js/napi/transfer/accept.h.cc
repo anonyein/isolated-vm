@@ -15,8 +15,8 @@ struct reaccept_napi_value {
 		}
 
 		template <class Tag>
-		constexpr auto operator()(std::type_identity<value_of<Tag>> /*type*/, napi_value value) const -> value_of<Tag> {
-			return value_of<Tag>::from(value);
+		constexpr auto operator()(std::type_identity<local_of<Tag>> /*type*/, napi_value value) const -> local_of<Tag> {
+			return local_of<Tag>::from(value);
 		}
 };
 
@@ -29,112 +29,112 @@ struct accept_basic_napi_value {
 		using accept_reference_type = reaccept_napi_value;
 
 		// undefined & null
-		auto operator()(undefined_tag tag, visit_holder visit, std::monostate subject) const -> value_of<undefined_tag>;
-		auto operator()(undefined_tag tag, visit_holder visit, const auto& /*subject*/) const -> value_of<undefined_tag> {
+		auto operator()(undefined_tag tag, visit_holder visit, std::monostate subject) const -> local_of<undefined_tag>;
+		auto operator()(undefined_tag tag, visit_holder visit, const auto& /*subject*/) const -> local_of<undefined_tag> {
 			return (*this)(tag, visit, std::monostate{});
 		}
 
-		auto operator()(null_tag tag, visit_holder visit, std::nullptr_t subject) const -> value_of<null_tag>;
-		auto operator()(null_tag tag, visit_holder visit, const auto& /*subject*/) const -> value_of<null_tag> {
+		auto operator()(null_tag tag, visit_holder visit, std::nullptr_t subject) const -> local_of<null_tag>;
+		auto operator()(null_tag tag, visit_holder visit, const auto& /*subject*/) const -> local_of<null_tag> {
 			return (*this)(tag, visit, nullptr);
 		}
 
 		// boolean
-		auto operator()(boolean_tag tag, visit_holder visit, bool subject) const -> value_of<boolean_tag>;
+		auto operator()(boolean_tag tag, visit_holder visit, bool subject) const -> local_of<boolean_tag>;
 
 		// number
-		auto operator()(number_tag_of<double> tag, visit_holder visit, double subject) const -> value_of<number_tag_of<double>>;
-		auto operator()(number_tag_of<std::int32_t> tag, visit_holder visit, std::int32_t subject) const -> value_of<number_tag_of<std::int32_t>>;
-		auto operator()(number_tag_of<std::uint32_t> tag, visit_holder visit, std::uint32_t subject) const -> value_of<number_tag_of<std::uint32_t>>;
+		auto operator()(number_tag_of<double> tag, visit_holder visit, double subject) const -> local_of<number_tag_of<double>>;
+		auto operator()(number_tag_of<std::int32_t> tag, visit_holder visit, std::int32_t subject) const -> local_of<number_tag_of<std::int32_t>>;
+		auto operator()(number_tag_of<std::uint32_t> tag, visit_holder visit, std::uint32_t subject) const -> local_of<number_tag_of<std::uint32_t>>;
 
-		auto operator()(number_tag /*tag*/, visit_holder visit, auto&& subject) const -> value_of<number_tag> {
+		auto operator()(number_tag /*tag*/, visit_holder visit, auto&& subject) const -> local_of<number_tag> {
 			return (*this)(number_tag_of<double>{}, visit, double{std::forward<decltype(subject)>(subject)});
 		}
 
 		template <class Type>
-		auto operator()(number_tag_of<Type> tag, visit_holder visit, auto&& subject) const -> value_of<number_tag_of<Type>> {
+		auto operator()(number_tag_of<Type> tag, visit_holder visit, auto&& subject) const -> local_of<number_tag_of<Type>> {
 			return (*this)(tag, visit, Type{std::forward<decltype(subject)>(subject)});
 		}
 
 		// string
 		auto operator()(string_tag_of<char> tag, visit_holder visit, std::string_view subject) const
-			-> js::referenceable_value<value_of<string_tag_of<char>>>;
+			-> js::referenceable_value<local_of<string_tag_of<char>>>;
 		auto operator()(string_tag_of<char8_t> tag, visit_holder visit, std::u8string_view subject) const
-			-> js::referenceable_value<value_of<string_tag_of<char8_t>>>;
+			-> js::referenceable_value<local_of<string_tag_of<char8_t>>>;
 		auto operator()(string_tag_of<char16_t> tag, visit_holder visit, std::u16string_view subject) const
-			-> js::referenceable_value<value_of<string_tag_of<char16_t>>>;
+			-> js::referenceable_value<local_of<string_tag_of<char16_t>>>;
 
 		auto operator()(string_tag /*tag*/, visit_holder visit, auto&& subject) const
-			-> js::referenceable_value<value_of<string_tag>> {
+			-> js::referenceable_value<local_of<string_tag>> {
 			auto value = (*this)(string_tag_of<char16_t>{}, visit, std::u16string_view{std::forward<decltype(subject)>(subject)});
-			return js::referenceable_value{value_of<string_tag>{*value}};
+			return js::referenceable_value{local_of<string_tag>{*value}};
 		}
 
 		template <class Char>
 		auto operator()(string_tag_of<Char> tag, visit_holder visit, std::convertible_to<std::basic_string_view<Char>> auto&& subject) const
-			-> js::referenceable_value<value_of<string_tag_of<Char>>> {
+			-> js::referenceable_value<local_of<string_tag_of<Char>>> {
 			return (*this)(tag, visit, std::basic_string_view<Char>{std::forward<decltype(subject)>(subject)});
 		}
 
 		template <class Char>
 		auto operator()(string_tag_of<Char> tag, visit_holder visit, auto&& subject) const
-			-> js::referenceable_value<value_of<string_tag_of<Char>>> {
+			-> js::referenceable_value<local_of<string_tag_of<Char>>> {
 			return (*this)(tag, visit, std::basic_string<Char>{std::forward<decltype(subject)>(subject)});
 		}
 
 		// bigint
 		auto operator()(bigint_tag_of<std::int64_t> tag, visit_holder visit, std::int64_t subject) const
-			-> js::referenceable_value<value_of<bigint_tag_of<std::int64_t>>>;
+			-> js::referenceable_value<local_of<bigint_tag_of<std::int64_t>>>;
 		auto operator()(bigint_tag_of<std::uint64_t> tag, visit_holder visit, std::uint64_t subject) const
-			-> js::referenceable_value<value_of<bigint_tag_of<std::uint64_t>>>;
+			-> js::referenceable_value<local_of<bigint_tag_of<std::uint64_t>>>;
 		auto operator()(bigint_tag_of<js::bigint> tag, visit_holder visit, const js::bigint& subject) const
-			-> js::referenceable_value<value_of<bigint_tag_of<js::bigint>>>;
+			-> js::referenceable_value<local_of<bigint_tag_of<js::bigint>>>;
 		auto operator()(bigint_tag_of<js::bigint> tag, visit_holder visit, js::bigint&& subject) const
-			-> js::referenceable_value<value_of<bigint_tag_of<js::bigint>>>;
+			-> js::referenceable_value<local_of<bigint_tag_of<js::bigint>>>;
 
 		auto operator()(bigint_tag /*tag*/, visit_holder visit, auto&& subject) const
-			-> js::referenceable_value<value_of<bigint_tag>> {
+			-> js::referenceable_value<local_of<bigint_tag>> {
 			auto value = (*this)(bigint_tag_of<js::bigint>{}, visit, js::bigint{std::forward<decltype(subject)>(subject)});
-			return js::referenceable_value{value_of<bigint_tag>{*value}};
+			return js::referenceable_value{local_of<bigint_tag>{*value}};
 		}
 
 		template <class Type>
 		auto operator()(bigint_tag_of<Type> tag, visit_holder visit, auto&& subject) const
-			-> js::referenceable_value<value_of<bigint_tag_of<Type>>> {
+			-> js::referenceable_value<local_of<bigint_tag_of<Type>>> {
 			return (*this)(tag, visit, Type{std::forward<decltype(subject)>(subject)});
 		}
 
 		// date
 		auto operator()(date_tag tag, visit_holder /*visit*/, js_clock::time_point subject) const
-			-> js::referenceable_value<value_of<date_tag>>;
+			-> js::referenceable_value<local_of<date_tag>>;
 
 		// error
 		auto operator()(error_tag /*tag*/, visit_holder visit, const js::error_value& subject) const
-			-> js::referenceable_value<value_of<error_tag>>;
+			-> js::referenceable_value<local_of<error_tag>>;
 
 		auto operator()(error_tag tag, visit_holder visit, const auto& subject) const
-			-> js::referenceable_value<value_of<error_tag>> {
+			-> js::referenceable_value<local_of<error_tag>> {
 			return (*this)(tag, visit, js::error_value{subject});
 		}
 
 		// data blocks (array buffer, shared array buffer)
 		auto operator()(array_buffer_tag tag, visit_holder visit, const js::array_buffer& subject) const
-			-> js::referenceable_value<value_of<array_buffer_tag>>;
+			-> js::referenceable_value<local_of<array_buffer_tag>>;
 		auto operator()(shared_array_buffer_tag tag, visit_holder visit, js::shared_array_buffer&& subject) const
-			-> js::referenceable_value<value_of<shared_array_buffer_tag>>;
+			-> js::referenceable_value<local_of<shared_array_buffer_tag>>;
 		auto operator()(shared_array_buffer_tag tag, visit_holder visit, const js::shared_array_buffer& subject) const
-			-> js::referenceable_value<value_of<shared_array_buffer_tag>>;
+			-> js::referenceable_value<local_of<shared_array_buffer_tag>>;
 
 		// typed arrays & data view
 		template <std::convertible_to<array_buffer_view_tag> Tag>
 		auto operator()(this const auto& self, Tag /*tag*/, auto& visit, auto&& subject)
-			-> js::referenceable_value<value_of<Tag>> {
+			-> js::referenceable_value<local_of<Tag>> {
 			auto byte_offset = subject.byte_offset();
 			auto length = subject.size();
 			// TODO: We accept the nested `buffer` property as a `data_block` which means `make` needs to
 			// invoke `is_arraybuffer` on it again even though we knew what it was a moment ago.
-			auto buffer = value_of<data_block_tag>::from(visit(std::forward<decltype(subject)>(subject).buffer(), self));
-			return js::referenceable_value{value_of<Tag>::make(self.environment(), buffer, byte_offset, length)};
+			auto buffer = local_of<data_block_tag>::from(visit(std::forward<decltype(subject)>(subject).buffer(), self));
+			return js::referenceable_value{local_of<Tag>::make(self.environment(), buffer, byte_offset, length)};
 		}
 
 		// extras
@@ -161,18 +161,18 @@ struct accept_napi_value : accept_basic_napi_value {
 
 		// function
 		template <class Callback>
-		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, js::free_function<Callback> subject) const -> value_of<function_tag> {
-			return value_of<function_tag>::make(environment(), std::forward<decltype(subject)>(subject));
+		auto operator()(function_prototype_tag /*tag*/, visit_holder /*visit*/, js::free_function<Callback> subject) const -> local_of<function_tag> {
+			return local_of<function_tag>::make(environment(), std::forward<decltype(subject)>(subject));
 		}
 
 		// vectors
 		auto operator()(this const auto& self, vector_tag /*tag*/, auto& visit, auto&& subject)
-			-> js::deferred_receiver<value_of<vector_tag>, decltype(self), decltype(visit), decltype(subject)> {
+			-> js::deferred_receiver<local_of<vector_tag>, decltype(self), decltype(visit), decltype(subject)> {
 			auto [... size ] = util::maybe_range_size(subject, 0);
 			return {
-				value_of<vector_tag>::from(napi::invoke(napi_create_array_with_length, napi_env{self}, size...)),
+				local_of<vector_tag>::from(napi::invoke(napi_create_array_with_length, napi_env{self}, size...)),
 				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
-				[](value_of<vector_tag> array, auto& self, auto& visit, auto /*&&*/ subject) -> void {
+				[](local_of<vector_tag> array, auto& self, auto& visit, auto /*&&*/ subject) -> void {
 					int ii = 0;
 					auto&& range = util::into_range(std::forward<decltype(subject)>(subject));
 					for (auto&& element : util::forward_range(std::forward<decltype(range)>(range))) {
@@ -185,11 +185,11 @@ struct accept_napi_value : accept_basic_napi_value {
 
 		template <std::size_t Size>
 		auto operator()(this const auto& self, tuple_tag<Size> /*tag*/, auto& visit, auto&& subject)
-			-> js::deferred_receiver<value_of<vector_tag>, decltype(self), decltype(visit), decltype(subject)> {
+			-> js::deferred_receiver<local_of<vector_tag>, decltype(self), decltype(visit), decltype(subject)> {
 			return {
-				value_of<vector_tag>::from(napi::invoke(napi_create_array_with_length, napi_env{self}, Size)),
+				local_of<vector_tag>::from(napi::invoke(napi_create_array_with_length, napi_env{self}, Size)),
 				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
-				[](value_of<vector_tag> array, auto& self, auto& visit, auto /*&&*/ tuple) -> void {
+				[](local_of<vector_tag> array, auto& self, auto& visit, auto /*&&*/ tuple) -> void {
 					const auto [... indices ] = util::sequence<Size>;
 					(..., [ & ]() -> void {
 						// nb: This is forwarded to *each* visitor. The visitor should be aware and only lvalue
@@ -203,28 +203,28 @@ struct accept_napi_value : accept_basic_napi_value {
 
 		// arrays & dictionaries
 		auto operator()(this const auto& self, list_tag /*tag*/, auto& visit, auto&& subject)
-			-> js::deferred_receiver<value_of<list_tag>, decltype(self), decltype(visit), decltype(subject)> {
+			-> js::deferred_receiver<local_of<list_tag>, decltype(self), decltype(visit), decltype(subject)> {
 			return {
-				value_of<list_tag>::from(napi::invoke(napi_create_array, napi_env{self})),
+				local_of<list_tag>::from(napi::invoke(napi_create_array, napi_env{self})),
 				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
-				[](value_of<list_tag> array, auto& self, auto& visit, auto /*&&*/ subject) -> void {
+				[](local_of<list_tag> array, auto& self, auto& visit, auto /*&&*/ subject) -> void {
 					self.accept_entry_pair_vector(visit, array, std::forward<decltype(subject)>(subject));
 				}
 			};
 		}
 
 		auto operator()(this const auto& self, dictionary_tag /*tag*/, auto& visit, auto&& subject)
-			-> js::deferred_receiver<value_of<dictionary_tag>, decltype(self), decltype(visit), decltype(subject)> {
+			-> js::deferred_receiver<local_of<dictionary_tag>, decltype(self), decltype(visit), decltype(subject)> {
 			return {
-				value_of<dictionary_tag>::from(napi::invoke(napi_create_object, napi_env{self})),
+				local_of<dictionary_tag>::from(napi::invoke(napi_create_object, napi_env{self})),
 				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
-				[](value_of<dictionary_tag> object, auto& self, auto& visit, auto /*&&*/ subject) -> void {
+				[](local_of<dictionary_tag> object, auto& self, auto& visit, auto /*&&*/ subject) -> void {
 					self.accept_entry_pair_vector(visit, object, std::forward<decltype(subject)>(subject));
 				}
 			};
 		}
 
-		auto accept_entry_pair_vector(this const auto& self, auto& visit, value_of<object_tag> target, auto&& subject) -> void {
+		auto accept_entry_pair_vector(this const auto& self, auto& visit, local_of<object_tag> target, auto&& subject) -> void {
 			std::vector<napi_property_descriptor> properties;
 			auto&& range = util::into_range(std::forward<decltype(subject)>(subject));
 			properties.reserve(std::size(range));
@@ -234,7 +234,7 @@ struct accept_napi_value : accept_basic_napi_value {
 					.utf8name{},
 					// TODO: `napi_define_properties` only works with string keys but the nested acceptor will
 					// accept indexed properties as numeric napi values. `visit.first` should be invoked
-					// against something that maybe resolves to `std::variant<int32_t, value_of<name_tag>>`.
+					// against something that maybe resolves to `std::variant<int32_t, local_of<name_tag>>`.
 					.name = napi::invoke(napi_coerce_to_string, napi_env{self}, name),
 
 					.method{},
@@ -253,18 +253,18 @@ struct accept_napi_value : accept_basic_napi_value {
 		// structs
 		template <std::size_t Size>
 		auto operator()(this const auto& self, struct_tag<Size> /*tag*/, auto& visit, auto&& subject)
-			-> js::deferred_receiver<value_of<dictionary_tag>, decltype(self), decltype(visit), decltype(subject)> {
+			-> js::deferred_receiver<local_of<dictionary_tag>, decltype(self), decltype(visit), decltype(subject)> {
 			return {
-				value_of<dictionary_tag>::from(napi::invoke(napi_create_object, napi_env{self})),
+				local_of<dictionary_tag>::from(napi::invoke(napi_create_object, napi_env{self})),
 				std::forward_as_tuple(self, visit, std::forward<decltype(subject)>(subject)),
-				[](value_of<dictionary_tag> object, auto& self, auto& visit, auto /*&&*/ subject) -> void {
+				[](local_of<dictionary_tag> object, auto& self, auto& visit, auto /*&&*/ subject) -> void {
 					self.template accept_entry_pair_struct<Size>(visit, object, std::forward<decltype(subject)>(subject));
 				}
 			};
 		}
 
 		template <std::size_t Size>
-		auto accept_entry_pair_struct(this const auto& self, auto& visit, value_of<object_tag> target, auto&& subject) -> void {
+		auto accept_entry_pair_struct(this const auto& self, auto& visit, local_of<object_tag> target, auto&& subject) -> void {
 			// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
 			std::array<napi_property_descriptor, Size> properties;
 			const auto [... indices ] = util::sequence<Size>;
@@ -299,18 +299,32 @@ struct accept_napi_value : accept_basic_napi_value {
 		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
-// `value_of<object_tag>{}.assign(...)` implementation
+// Forward `value_of<T>`
+template <class Tag>
+struct accept_napi_value_of {
+	public:
+		explicit accept_napi_value_of(auto* /*transfer*/) {}
+
+		auto operator()(Tag /*tag*/, visit_holder /*visit*/, value_of<Tag> subject) const -> value_of<Tag> {
+			return subject;
+		}
+
+		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+};
+
+// `local_of<object_tag>{}->assign(...)` implementation
 struct object_assign_delegate {
 	public:
-		explicit object_assign_delegate(value_of<object_tag> object) : object_{object} {}
+		explicit object_assign_delegate(local_of<object_tag> object) : object_{object} {}
 		auto operator*() const { return object_; }
 
 	private:
-		value_of<object_tag> object_;
+		local_of<object_tag> object_;
 };
 
-auto value_for_object::assign(this value_of<object_tag> self, auto_environment auto& env, auto source) -> void {
-	js::transfer_in<object_assign_delegate>(std::move(source), env, object_assign_delegate{self});
+auto local_for_object::assign(auto_environment auto& env, auto source) const -> void {
+	js::transfer_in<object_assign_delegate>(std::move(source), env, object_assign_delegate{local_of{*this}});
 }
 
 } // namespace js::napi
@@ -327,24 +341,20 @@ struct accept<Meta, napi_value> : napi::accept_napi_value_with<Meta> {
 		using accept_type::accept_type;
 };
 
-// Tagged `value_of<T>` acceptor
+// Tagged `local_of<T>` acceptor
 template <>
-struct accept_property_subject<napi::value_of<value_tag>> : std::type_identity<napi_value> {};
+struct accept_property_subject<napi::local_of<value_tag>> : std::type_identity<napi_value> {};
 
 template <class Meta, class Tag>
-struct accept<Meta, napi::value_of<Tag>> : napi::accept_napi_value_with<Meta> {
+struct accept<Meta, napi::local_of<Tag>> : napi::accept_napi_value_with<Meta> {
 		using accept_type = napi::accept_napi_value_with<Meta>;
 		using accept_type::accept_type;
 };
 
-// Forwarded `value_of<T>` acceptor
-template <class Tag>
-struct accept<void, js::forward<napi::value_of<Tag>, Tag>> {
-		auto operator()(Tag /*tag*/, visit_holder /*visit*/, napi::value_of<Tag> subject) const -> js::forward<napi::value_of<Tag>, Tag> {
-			return js::forward{napi::value_of<Tag>{subject}, Tag{}};
-		}
-
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+// Forward `value_of<T>`
+template <class Meta, class Tag>
+struct accept<Meta, napi::value_of<Tag>> : napi::accept_napi_value_of<Tag> {
+		using napi::accept_napi_value_of<Tag>::accept_napi_value_of;
 };
 
 // Object key lookup via napi

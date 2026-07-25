@@ -1,4 +1,4 @@
-import * as backend from "#backend_v8";
+import * as backend from "#backend";
 
 export const AbstractModule: typeof backend.Module = backend.Module;
 export type AbstractModule = backend.Module;
@@ -62,7 +62,7 @@ export class Module extends backend.Module {
 		this.requests = requests;
 	}
 
-	async link(realm: backend.Realm, linker: Module.Linker): Promise<void> {
+	async link(realm: backend.Realm | null, linker: Module.Linker): Promise<void> {
 		const modules: AbstractModule[] = [];
 		const payload: number[] = [];
 		const seen = new Map<AbstractModule, number>();

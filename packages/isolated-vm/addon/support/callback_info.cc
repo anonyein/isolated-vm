@@ -2,7 +2,7 @@ module;
 #include "auto_js/export_tag.h"
 #include <cassert>
 export module isolated_vm:support.callback_info_fwd;
-import :handle.value_of;
+import :handle.local_of;
 import :value.primitive;
 import auto_js;
 import std;
@@ -16,7 +16,7 @@ class EXPORT callback_info {
 
 	public:
 		class iterator;
-		using value_type = value_of<>;
+		using value_type = local_of<>;
 
 		[[nodiscard]] constexpr auto begin() const -> iterator;
 		[[nodiscard]] constexpr auto end() const -> iterator;
@@ -73,11 +73,11 @@ using namespace isolated_vm;
 
 // `arguments` visitor
 template <>
-struct visit_subject_for<callback_info> : visit_subject_for<value_of<>> {};
+struct visit_subject_for<callback_info> : visit_subject_for<local_of<>> {};
 
 template <class Meta>
-struct visit<Meta, callback_info> : visit<Meta, value_of<>> {
-		using visit_type = visit<Meta, value_of<>>;
+struct visit<Meta, callback_info> : visit<Meta, local_of<>> {
+		using visit_type = visit<Meta, local_of<>>;
 		using visit_type::visit_type;
 
 		using visit_type::operator();

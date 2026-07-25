@@ -1,4 +1,5 @@
 export module auto_js:builtin.accept;
+import :functional;
 import :intrinsics.array_buffer;
 import :intrinsics.bigint;
 import :intrinsics.date;
@@ -72,7 +73,7 @@ struct accept_with_cast {
 			} else if constexpr (js::accept_allows_throw<Accept>) {
 				auto coerced = static_cast<Type>(value);
 				if (static_cast<Subject>(coerced) != value) {
-					throw js::range_error{u"Could not cast value"};
+					throw js::range_error{"Could not cast value {}", value};
 				}
 				return coerced;
 			} else {
@@ -326,15 +327,16 @@ struct accept<Meta, std::pair<Key, Value>> {
 		accept_value<Meta, Value> second;
 };
 
-// Accepting a pointer uses the reference acceptor, while also accepting `undefined`
+// Accepting a pointer uses the reference acceptor, while also accepting `null`
+// TODO: Clean up `parameter_transfer_as_t`
 template <class Meta, class Type>
-struct accept<Meta, Type*> : accept<Meta, Type&> {
-		using accept_type = accept<Meta, Type&>;
+struct accept<Meta, Type*> : accept<Meta, functional::parameter_transfer_as_t<Type&>> {
+		using accept_type = accept<Meta, functional::parameter_transfer_as_t<Type&>>;
 		using accept_type::accept_type;
 
 		using accept_type::operator();
 
-		constexpr auto operator()(undefined_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> Type* {
+		constexpr auto operator()(null_tag /*tag*/, visit_holder /*visit*/, const auto& /*subject*/) const -> Type* {
 			return nullptr;
 		}
 

@@ -70,15 +70,15 @@ auto fast_is_string(napi_value value) -> bool {
 }
 
 // Bug fixes
-auto napi_is_object_array_buffer(napi_env env, value_of<object_tag> value) -> bool {
+auto napi_is_object_array_buffer(napi_env env, local_of<object_tag> value) -> bool {
 	return napi::invoke(napi_is_arraybuffer, env, value);
 }
 
-auto napi_is_data_block_array_buffer(napi_env env, value_of<data_block_tag> value) -> bool {
+auto napi_is_data_block_array_buffer(napi_env env, local_of<data_block_tag> value) -> bool {
 	return napi_is_object_array_buffer(env, value);
 }
 
-auto bun_is_data_block_array_buffer(napi_env env, value_of<data_block_tag> value) -> bool {
+auto bun_is_data_block_array_buffer(napi_env env, local_of<data_block_tag> value) -> bool {
 	// https://github.com/oven-sh/bun/issues/32624
 	auto* string = napi::invoke(napi_coerce_to_string, env, value);
 	auto length = napi::invoke(napi_get_value_string_latin1, env, string, nullptr, 0);
@@ -86,30 +86,34 @@ auto bun_is_data_block_array_buffer(napi_env env, value_of<data_block_tag> value
 	return length == 20;
 }
 
-auto bun_is_object_array_buffer(napi_env env, value_of<object_tag> value) -> bool {
+auto bun_is_object_array_buffer(napi_env env, local_of<object_tag> value) -> bool {
 	if (napi::invoke(napi_is_arraybuffer, env, value)) {
-		return bun_is_data_block_array_buffer(env, value_of<data_block_tag>::from(value));
+		return bun_is_data_block_array_buffer(env, local_of<data_block_tag>::from(value));
 	} else {
 		return false;
 	}
 }
 
 // Optional value inspectors.
-auto v8_is_number_int32(value_of<number_tag> value) -> std::optional<bool> {
+auto v8_is_number_int32(local_of<number_tag> value) -> std::optional<bool> {
 	return std::bit_cast<v8::Local<v8::Number>>(value)->IsInt32();
 };
 
-auto v8_is_string_one_byte(value_of<string_tag> value) -> std::optional<bool> {
+auto v8_is_string_one_byte(local_of<string_tag> value) -> std::optional<bool> {
 	return std::bit_cast<v8::Local<v8::String>>(value)->IsOneByte();
 }
 
-auto node_api_maybe_is_shared_array_buffer(napi_env env, value_of<object_tag> value) -> std::optional<bool> {
-	return napi::invoke(node_api_is_sharedarraybuffer, env, value);
+auto node_api_maybe_is_shared_array_buffer(napi_env env, local_of<object_tag> value) -> std::optional<bool> {
+	if constexpr (node_api_has_sharedarraybuffer) {
+		return napi::invoke(node_api_is_sharedarraybuffer, env, value);
+	} else {
+		return std::nullopt;
+	}
 }
 
-auto bun_maybe_is_shared_array_buffer(napi_env env, value_of<object_tag> value) -> std::optional<bool> {
+auto bun_maybe_is_shared_array_buffer(napi_env env, local_of<object_tag> value) -> std::optional<bool> {
 	if (napi::invoke(napi_is_arraybuffer, env, value)) {
-		return !bun_is_data_block_array_buffer(env, value_of<data_block_tag>::from(value));
+		return !bun_is_data_block_array_buffer(env, local_of<data_block_tag>::from(value));
 	} else {
 		return std::nullopt;
 	}
@@ -118,7 +122,7 @@ auto bun_maybe_is_shared_array_buffer(napi_env env, value_of<object_tag> value) 
 constexpr auto unknown_maybe_is = [](auto...) -> std::optional<bool> { return std::nullopt; };
 
 // 'SharedArrayBuffer' functions
-auto v8_make_shared_array_buffer(js::shared_array_buffer::shared_pointer_type data, std::size_t byte_length) -> value_of<shared_array_buffer_tag> {
+auto v8_make_shared_array_buffer(js::shared_array_buffer::shared_pointer_type data, std::size_t byte_length) -> local_of<shared_array_buffer_tag> {
 	auto backing_store = [ & ]() -> auto {
 		// v8 does not call the deleter `byte_length` is zero. So the heap-allocated shared_ptr trick
 		// does not work in that case.
@@ -139,14 +143,14 @@ auto v8_make_shared_array_buffer(js::shared_array_buffer::shared_pointer_type da
 		}
 	}();
 	auto shared_array_buffer = v8::SharedArrayBuffer::New(v8::Isolate::GetCurrent(), std::move(backing_store));
-	return value_of<shared_array_buffer_tag>::from(std::bit_cast<napi_value>(shared_array_buffer));
+	return local_of<shared_array_buffer_tag>::from(std::bit_cast<napi_value>(shared_array_buffer));
 };
 
-auto v8_shared_array_buffer_get_byte_length(value_of<shared_array_buffer_tag> buffer) -> std::size_t {
+auto v8_shared_array_buffer_get_byte_length(local_of<shared_array_buffer_tag> buffer) -> std::size_t {
 	return std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(napi_value{buffer})->ByteLength();
 };
 
-auto v8_shared_array_buffer_get_backing_store(value_of<shared_array_buffer_tag> buffer) -> std::shared_ptr<std::byte[]> {
+auto v8_shared_array_buffer_get_backing_store(local_of<shared_array_buffer_tag> buffer) -> std::shared_ptr<std::byte[]> {
 	auto backing_store = std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(buffer)->GetBackingStore();
 	auto* data = reinterpret_cast<std::byte*>(backing_store->Data());
 	// NOLINTNEXTLINE(modernize-avoid-c-arrays)
@@ -155,15 +159,15 @@ auto v8_shared_array_buffer_get_backing_store(value_of<shared_array_buffer_tag> 
 
 // 'ArrayBufferView' constructors
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-auto v8_make_sab_data_view(value_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<data_view_tag> {
+auto v8_make_sab_data_view(local_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<data_view_tag> {
 	auto buffer_local = std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(napi_value{buffer});
 	auto view_local = v8::DataView::New(buffer_local, byte_offset, length);
-	return value_of<data_view_tag>::from(std::bit_cast<napi_value>(view_local));
+	return local_of<data_view_tag>::from(std::bit_cast<napi_value>(view_local));
 };
 
 template <class Type>
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-auto v8_make_sab_typed_array_of(value_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<typed_array_tag_of<Type>> {
+auto v8_make_sab_typed_array_of(local_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<typed_array_tag_of<Type>> {
 	using constructor_type = type_t<util::overloaded{
 		[](std::type_identity<double>) -> std::type_identity<v8::Float64Array> { return {}; },
 		[](std::type_identity<float>) -> std::type_identity<v8::Float32Array> { return {}; },
@@ -180,7 +184,7 @@ auto v8_make_sab_typed_array_of(value_of<shared_array_buffer_tag> buffer, std::s
 	}(type<Type>)>;
 	auto buffer_local = std::bit_cast<v8::Local<v8::SharedArrayBuffer>>(napi_value{buffer});
 	auto view_local = constructor_type::New(buffer_local, byte_offset, length);
-	return value_of<typed_array_tag_of<Type>>::from(std::bit_cast<napi_value>(view_local));
+	return local_of<typed_array_tag_of<Type>>::from(std::bit_cast<napi_value>(view_local));
 };
 
 template <class Type>
@@ -302,20 +306,20 @@ auto initialize_host_environment(napi_env env) -> void {
 				host_uv_dlclose = unknown_uv_dlclose;
 				host_uv_dlerror = unknown_uv_dlerror;
 				host_uv_dlopen = unknown_uv_dlopen;
-				make_sab_data_view = unknown_sab_throw<value_of<data_view_tag>>;
-				make_sab_typed_array_of<double> = unknown_sab_throw<value_of<typed_array_tag_of<double>>>;
-				make_sab_typed_array_of<float> = unknown_sab_throw<value_of<typed_array_tag_of<float>>>;
-				make_sab_typed_array_of<js::float16_t> = unknown_sab_throw<value_of<typed_array_tag_of<js::float16_t>>>;
-				make_sab_typed_array_of<js::uint8_clamped_t> = unknown_sab_throw<value_of<typed_array_tag_of<js::uint8_clamped_t>>>;
-				make_sab_typed_array_of<std::int16_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::int16_t>>>;
-				make_sab_typed_array_of<std::int32_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::int32_t>>>;
-				make_sab_typed_array_of<std::int64_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::int64_t>>>;
-				make_sab_typed_array_of<std::int8_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::int8_t>>>;
-				make_sab_typed_array_of<std::uint16_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::uint16_t>>>;
-				make_sab_typed_array_of<std::uint32_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::uint32_t>>>;
-				make_sab_typed_array_of<std::uint64_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::uint64_t>>>;
-				make_sab_typed_array_of<std::uint8_t> = unknown_sab_throw<value_of<typed_array_tag_of<std::uint8_t>>>;
-				make_shared_array_buffer = unknown_sab_throw<value_of<shared_array_buffer_tag>>;
+				make_sab_data_view = unknown_sab_throw<local_of<data_view_tag>>;
+				make_sab_typed_array_of<double> = unknown_sab_throw<local_of<typed_array_tag_of<double>>>;
+				make_sab_typed_array_of<float> = unknown_sab_throw<local_of<typed_array_tag_of<float>>>;
+				make_sab_typed_array_of<js::float16_t> = unknown_sab_throw<local_of<typed_array_tag_of<js::float16_t>>>;
+				make_sab_typed_array_of<js::uint8_clamped_t> = unknown_sab_throw<local_of<typed_array_tag_of<js::uint8_clamped_t>>>;
+				make_sab_typed_array_of<std::int16_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::int16_t>>>;
+				make_sab_typed_array_of<std::int32_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::int32_t>>>;
+				make_sab_typed_array_of<std::int64_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::int64_t>>>;
+				make_sab_typed_array_of<std::int8_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::int8_t>>>;
+				make_sab_typed_array_of<std::uint16_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::uint16_t>>>;
+				make_sab_typed_array_of<std::uint32_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::uint32_t>>>;
+				make_sab_typed_array_of<std::uint64_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::uint64_t>>>;
+				make_sab_typed_array_of<std::uint8_t> = unknown_sab_throw<local_of<typed_array_tag_of<std::uint8_t>>>;
+				make_shared_array_buffer = unknown_sab_throw<local_of<shared_array_buffer_tag>>;
 				maybe_is_number_int32 = unknown_maybe_is;
 				maybe_is_shared_array_buffer = unknown_maybe_is;
 				maybe_is_string_latin1 = unknown_maybe_is;

@@ -27,15 +27,18 @@ native_module_handle::native_module_handle(
 		options_{std::move(options)},
 		names_{std::move(names)} {}
 
-auto native_module_handle::instantiate(environment& env, realm_handle& realm) -> forward_promise_type {
+auto native_module_handle::instantiate(environment& env, realm_handle* realm) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(
 		env,
 		[](environment& env, agent_handle agent, js::iv8::shared_remote<v8::Module> module_record) -> auto {
-			return js::forward{module_handle::class_template(env).construct(env, std::move(agent), std::move(module_record))};
+			return js::forward{module_handle::class_template(env)->construct(env, std::move(agent), std::move(module_record))};
 		}
 	);
-	realm.agent().schedule(
-		[ realm = realm.realm(),
+	if (realm == nullptr) {
+		return js::forward{promise};
+	}
+	realm->agent().schedule(
+		[ realm = realm->realm(),
 			names = names_,
 			options = options_,
 			initialize = initialize_ ](
@@ -46,7 +49,7 @@ auto native_module_handle::instantiate(environment& env, realm_handle& realm) ->
 			context_scope_operation(lock, realm->deref(lock), [ & ](const realm_scope& realm) -> void {
 				auto addon_lock = isolated_vm::basic_lock_implementation{lock};
 				auto module_result = v8::Local<v8::Module>{};
-				auto make = [ & ](std::span<isolated_vm::value_of<prototype_tag>> values) -> void {
+				auto make = [ & ](std::span<isolated_vm::local_of<prototype_tag>> values) -> void {
 					auto v8_origin = js::transfer_in<v8::Local<v8::String>>(options.origin, lock);
 					auto v8_names = js::transfer_in<std::vector<v8::Local<v8::String>>>(names, lock);
 					auto v8_values = std::bit_cast<std::span<v8::Local<v8::Data>>>(values);
@@ -57,13 +60,13 @@ auto native_module_handle::instantiate(environment& env, realm_handle& realm) ->
 				resolver(std::move(agent), make_shared_remote(lock, module_result));
 			});
 		},
-		realm.agent(),
+		realm->agent(),
 		std::move(resolver)
 	);
 	return js::forward{promise};
 }
 
-auto native_module_handle::class_template(environment& env) -> js::napi::value_of<js::class_tag_of<native_module_handle>> {
+auto native_module_handle::class_template(environment& env) -> js::napi::local_of<js::class_tag_of<native_module_handle>> {
 	return env.class_template(
 		std::type_identity<native_module_handle>{},
 		js::class_template{
@@ -109,7 +112,7 @@ auto native_module_handle::create(environment& env, std::string filename, create
 			auto [ lib, names, initialize ] = isolated_vm::subscribe_registration([ & ]() -> auto {
 				return js::napi::uv_dlib{filename};
 			});
-			auto handle = native_module_handle::class_template(env).construct(env, std::move(lib), initialize, std::move(options), names());
+			auto handle = native_module_handle::class_template(env)->construct(env, std::move(lib), initialize, std::move(options), names());
 			return js::forward{handle};
 		}
 	);

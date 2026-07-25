@@ -1,14 +1,11 @@
 module napi_js;
-import :api;
-import :array_buffer;
-import :support.host;
 import std;
 import v8;
 
 namespace js::napi {
 
-// `bound_value_for_data_block`
-bound_value_for_data_block::operator std::span<std::byte>() const {
+// `value_for_data_block`
+value_for_data_block::operator std::span<std::byte>() const {
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 	void* bytes;
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
@@ -17,25 +14,25 @@ bound_value_for_data_block::operator std::span<std::byte>() const {
 	return std::span{reinterpret_cast<std::byte*>(bytes), byte_length};
 }
 
-// `bound_value_for_array_buffer`
-bound_value_for_array_buffer::operator js::array_buffer() const {
+// `value_for_array_buffer`
+value_for_array_buffer::operator js::array_buffer() const {
 	return js::array_buffer{std::span<std::byte>{*this}};
 }
 
-// `bound_value_for_shared_array_buffer`
-bound_value_for_shared_array_buffer::operator js::shared_array_buffer() const {
-	auto byte_length = shared_array_buffer_get_byte_length(value_of{*this});
-	auto backing_store = shared_array_buffer_get_backing_store(value_of{*this});
+// `value_for_shared_array_buffer`
+value_for_shared_array_buffer::operator js::shared_array_buffer() const {
+	auto byte_length = shared_array_buffer_get_byte_length(local_of{*this});
+	auto backing_store = shared_array_buffer_get_backing_store(local_of{*this});
 	return js::shared_array_buffer{byte_length, std::move(backing_store)};
 }
 
-// `value_for_typed_array`
-auto value_for_typed_array::make(const environment& env, napi_typedarray_type type_tag, value_of<array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<typed_array_tag> {
-	return value_of<typed_array_tag>::from(napi::invoke(napi_create_typedarray, napi_env{env}, type_tag, length, napi_value{buffer}, byte_offset));
+// `local_for_typed_array`
+auto local_for_typed_array::make(const environment& env, napi_typedarray_type type_tag, local_of<array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<typed_array_tag> {
+	return local_of<typed_array_tag>::from(napi::invoke(napi_create_typedarray, napi_env{env}, type_tag, length, napi_value{buffer}, byte_offset));
 }
 
-// `bound_value_for_typed_array`
-auto bound_value_for_typed_array::make_bound(const environment& env, value_of<typed_array_tag> typed_array) -> any_bound_typed_array {
+// `value_for_typed_array`
+auto value_for_typed_array::make_bound(const environment& env, local_of<typed_array_tag> typed_array) -> any_value_typed_array {
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 	napi_typedarray_type type_tag;
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
@@ -45,8 +42,8 @@ auto bound_value_for_typed_array::make_bound(const environment& env, value_of<ty
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 	std::size_t byte_offset;
 	napi::invoke0(napi_get_typedarray_info, env, napi_value{typed_array}, &type_tag, &length, nullptr, &array_buffer, &byte_offset);
-	const auto make = [ & ]<class Tag>(Tag /*tag*/) -> any_bound_typed_array {
-		return bound_value<Tag>{env, value_of<Tag>::from(typed_array), std::tuple{value_of<data_block_tag>::from(array_buffer), byte_offset, length}};
+	const auto make = [ & ]<class Tag>(Tag /*tag*/) -> any_value_typed_array {
+		return value_of<Tag>{env, local_of<Tag>::from(typed_array), std::tuple{local_of<data_block_tag>::from(array_buffer), byte_offset, length}};
 	};
 	switch (type_tag) {
 		case napi_bigint64_array: return make(typed_array_tag_of<std::int64_t>{});
@@ -65,26 +62,26 @@ auto bound_value_for_typed_array::make_bound(const environment& env, value_of<ty
 	std::unreachable();
 }
 
-// `value_for_data_view`
-auto value_for_data_view::make(const environment& env, value_of<data_block_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<data_view_tag> {
+// `local_for_data_view`
+auto local_for_data_view::make(const environment& env, local_of<data_block_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<data_view_tag> {
 	if (napi::invoke(napi_is_arraybuffer, napi_env{env}, buffer)) {
-		return make(env, value_of<array_buffer_tag>::from(buffer), byte_offset, length);
+		return make(env, local_of<array_buffer_tag>::from(buffer), byte_offset, length);
 	} else {
-		return make(env, value_of<shared_array_buffer_tag>::from(buffer), byte_offset, length);
+		return make(env, local_of<shared_array_buffer_tag>::from(buffer), byte_offset, length);
 	}
 }
 
-auto value_for_data_view::make(const environment& env, value_of<array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<data_view_tag> {
-	return value_of<data_view_tag>::from(napi::invoke(napi_create_dataview, napi_env{env}, length, napi_value{buffer}, byte_offset));
+auto local_for_data_view::make(const environment& env, local_of<array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<data_view_tag> {
+	return local_of<data_view_tag>::from(napi::invoke(napi_create_dataview, napi_env{env}, length, napi_value{buffer}, byte_offset));
 }
 
-auto value_for_data_view::make(const environment& /*env*/, value_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> value_of<data_view_tag> {
+auto local_for_data_view::make(const environment& /*env*/, local_of<shared_array_buffer_tag> buffer, std::size_t byte_offset, std::size_t length) -> local_of<data_view_tag> {
 	return make_sab_data_view(buffer, byte_offset, length);
 }
 
-// `bound_value_for_data_view`
-bound_value_for_data_view::bound_value_for_data_view(napi_env env, value_of<data_view_tag> data_view) :
-		bound_value_next{
+// `value_for_data_view`
+value_for_data_view::value_for_data_view(napi_env env, local_of<data_view_tag> data_view) :
+		value_next{
 			env,
 			data_view,
 			[ & ] -> auto {
@@ -95,7 +92,7 @@ bound_value_for_data_view::bound_value_for_data_view(napi_env env, value_of<data
 				// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 				std::size_t byte_offset;
 				napi::invoke0(napi_get_dataview_info, env, napi_value{data_view}, &length, nullptr, &array_buffer, &byte_offset);
-				return std::tuple{value_of<data_block_tag>::from(array_buffer), byte_offset, length};
+				return std::tuple{local_of<data_block_tag>::from(array_buffer), byte_offset, length};
 			}(),
 		} {}
 

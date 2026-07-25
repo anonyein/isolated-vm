@@ -17,7 +17,7 @@ auto script_handle::compile_script(environment& env, agent_handle& agent, js::st
 		env,
 		[](environment& env, expected_type script) -> auto {
 			return completion_record{script.transform([ & ](script_handle& script) -> auto {
-				return js::forward{script_handle::class_template(env).construct(env, std::move(script))};
+				return js::forward{script_handle::class_template(env)->construct(env, std::move(script))};
 			})};
 		}
 	);
@@ -44,11 +44,14 @@ auto script_handle::compile_script(environment& env, agent_handle& agent, js::st
 	return js::forward{promise};
 }
 
-auto script_handle::run(environment& env, realm_handle& realm, run_script_options options) -> forward_promise_type {
+auto script_handle::run(environment& env, realm_handle* realm, run_script_options options) -> forward_promise_type {
 	auto [ promise, resolver ] = make_promise(env);
-	realm.agent().schedule(
+	if (realm == nullptr) {
+		return js::forward{promise};
+	}
+	realm->agent().schedule(
 		[ options = options,
-			realm = realm.realm(),
+			realm = realm->realm(),
 			script_remote = script_ ](
 			const agent_handle::lock& lock,
 			auto resolver
@@ -80,7 +83,7 @@ auto script_handle::run(environment& env, realm_handle& realm, run_script_option
 	return js::forward{promise};
 }
 
-auto script_handle::class_template(environment& env) -> js::napi::value_of<class_tag_of<script_handle>> {
+auto script_handle::class_template(environment& env) -> js::napi::local_of<class_tag_of<script_handle>> {
 	return env.class_template(
 		std::type_identity<script_handle>{},
 		js::class_template{

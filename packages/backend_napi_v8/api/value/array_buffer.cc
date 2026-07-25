@@ -9,8 +9,8 @@ import std;
 namespace isolated_vm {
 using namespace js;
 
-// value_for_data_block
-auto value_for_data_block::inspect() const -> value_typeof {
+// local_for_data_block
+auto local_for_data_block::inspect() const -> value_typeof {
 	auto subject = cast_in(*this);
 	if (subject->IsArrayBuffer()) {
 		return value_typeof::array_buffer;
@@ -19,32 +19,32 @@ auto value_for_data_block::inspect() const -> value_typeof {
 	}
 }
 
-// bound_value_for_data_block
-bound_value_for_data_block::operator std::span<std::byte>() const {
+// value_for_data_block
+value_for_data_block::operator std::span<std::byte>() const {
 	return {data(), byte_length()};
 }
 
-bound_value_for_data_block::operator js::array_buffer() const {
+value_for_data_block::operator js::array_buffer() const {
 	return js::array_buffer{std::span<std::byte>{*this}};
 }
 
-auto bound_value_for_data_block::byte_length() const -> std::size_t {
-	auto handle = cast_in(value_of{*this}).As<v8::ArrayBuffer>();
+auto value_for_data_block::byte_length() const -> std::size_t {
+	auto handle = cast_in(local_of{*this}).As<v8::ArrayBuffer>();
 	return handle->ByteLength();
 }
 
-auto bound_value_for_data_block::data() const -> std::byte* {
-	auto handle = cast_in(value_of{*this}).As<v8::ArrayBuffer>();
+auto value_for_data_block::data() const -> std::byte* {
+	auto handle = cast_in(local_of{*this}).As<v8::ArrayBuffer>();
 	return static_cast<std::byte*>(handle->Data());
 }
 
-// value_for_array_buffer
-auto value_for_array_buffer::make(const runtime_lock& lock, js::array_buffer buffer) -> value_of<array_buffer_tag> {
+// local_for_array_buffer
+auto local_for_array_buffer::make(const runtime_lock& lock, js::array_buffer buffer) -> local_of<array_buffer_tag> {
 	return cast_out(js::transfer_in<v8::Local<v8::ArrayBuffer>>(std::move(buffer), unwrap_lock_witness(lock)));
 }
 
-// value_for_array_buffer_view
-auto value_for_array_buffer_view::inspect() const -> value_typeof {
+// local_for_array_buffer_view
+auto local_for_array_buffer_view::inspect() const -> value_typeof {
 	auto subject = cast_in(*this);
 	if (subject->IsUint8Array()) {
 		return value_typeof::uint8_array;
@@ -77,38 +77,46 @@ auto value_for_array_buffer_view::inspect() const -> value_typeof {
 	}
 }
 
-// bound_value_for_typed_array_of<Type>
+// value_for_typed_array_of<Type>
 template <class Type>
-auto bound_value_for_typed_array_of<Type>::buffer() const -> value_of<data_block_tag> {
-	return cast_out(cast_in(value_of{*this})->Buffer().template As<iv8::DataBlock>());
+auto value_for_typed_array_of<Type>::buffer() const -> local_of<data_block_tag> {
+	return cast_out(cast_in(local_of{*this})->Buffer().template As<iv8::DataBlock>());
 }
 
 template <class Type>
-auto bound_value_for_typed_array_of<Type>::byte_offset() const -> std::size_t {
-	return cast_in(value_of{*this})->ByteOffset();
+auto value_for_typed_array_of<Type>::byte_offset() const -> std::size_t {
+	return cast_in(local_of{*this})->ByteOffset();
 }
 
 template <class Type>
-auto bound_value_for_typed_array_of<Type>::size() const -> std::size_t {
-	if constexpr (type<Type> == type<void>) {
-		return cast_in(value_of{*this})->ByteLength();
-	} else {
-		return cast_in(value_of{*this})->Length();
-	}
+auto value_for_typed_array_of<Type>::size() const -> std::size_t {
+	return cast_in(local_of{*this})->Length();
 }
 
-template class bound_value_for_typed_array_of<double>;
-template class bound_value_for_typed_array_of<float>;
-template class bound_value_for_typed_array_of<js::float16_t>;
-template class bound_value_for_typed_array_of<js::uint8_clamped_t>;
-template class bound_value_for_typed_array_of<std::int16_t>;
-template class bound_value_for_typed_array_of<std::int32_t>;
-template class bound_value_for_typed_array_of<std::int64_t>;
-template class bound_value_for_typed_array_of<std::int8_t>;
-template class bound_value_for_typed_array_of<std::uint16_t>;
-template class bound_value_for_typed_array_of<std::uint32_t>;
-template class bound_value_for_typed_array_of<std::uint64_t>;
-template class bound_value_for_typed_array_of<std::uint8_t>;
-template class bound_value_for_typed_array_of<void>;
+template class value_for_typed_array_of<double>;
+template class value_for_typed_array_of<float>;
+template class value_for_typed_array_of<js::float16_t>;
+template class value_for_typed_array_of<js::uint8_clamped_t>;
+template class value_for_typed_array_of<std::int16_t>;
+template class value_for_typed_array_of<std::int32_t>;
+template class value_for_typed_array_of<std::int64_t>;
+template class value_for_typed_array_of<std::int8_t>;
+template class value_for_typed_array_of<std::uint16_t>;
+template class value_for_typed_array_of<std::uint32_t>;
+template class value_for_typed_array_of<std::uint64_t>;
+template class value_for_typed_array_of<std::uint8_t>;
+
+// value_for_data_view
+auto value_for_data_view::buffer() const -> local_of<data_block_tag> {
+	return cast_out(cast_in(local_of{*this})->Buffer().template As<iv8::DataBlock>());
+}
+
+auto value_for_data_view::byte_offset() const -> std::size_t {
+	return cast_in(local_of{*this})->ByteOffset();
+}
+
+auto value_for_data_view::size() const -> std::size_t {
+	return cast_in(local_of{*this})->ByteLength();
+}
 
 } // namespace isolated_vm

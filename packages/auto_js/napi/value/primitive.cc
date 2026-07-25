@@ -1,27 +1,24 @@
 module napi_js;
-import :api;
-import :bound_value;
-import :value_handle;
 import std;
 
 namespace js::napi {
 
 // boolean
-bound_value_for_boolean::operator bool() const {
+value_for_boolean::operator bool() const {
 	return napi::invoke(napi_get_value_bool, env(), napi_value{*this});
 }
 
 // number
-bound_value_for_number::operator double() const {
+value_for_number::operator double() const {
 	return napi::invoke(napi_get_value_double, env(), napi_value{*this});
 }
 
-bound_value_for_number::operator std::int32_t() const {
+value_for_number::operator std::int32_t() const {
 	return napi::invoke(napi_get_value_int32, env(), napi_value{*this});
 }
 
 // bigint
-bound_value_for_bigint::operator bigint() const {
+value_for_bigint::operator bigint() const {
 	js::bigint value;
 	auto one_word = std::uint64_t{};
 	auto length = std::size_t{1};
@@ -38,7 +35,7 @@ bound_value_for_bigint::operator bigint() const {
 	return value;
 }
 
-bound_value_for_bigint::operator std::int64_t() const {
+value_for_bigint::operator std::int64_t() const {
 	// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 	std::int64_t value;
 	// nb: `lossless` error not checked for consistency with `napi_get_value_int32`,
@@ -48,7 +45,7 @@ bound_value_for_bigint::operator std::int64_t() const {
 }
 
 // string
-bound_value_for_string::operator std::string() const {
+value_for_string::operator std::string() const {
 	std::string string;
 	auto length = napi::invoke(napi_get_value_string_latin1, env(), napi_value{*this}, nullptr, 0);
 	if (length > 0) {
@@ -60,7 +57,7 @@ bound_value_for_string::operator std::string() const {
 	return string;
 }
 
-bound_value_for_string::operator std::u16string() const {
+value_for_string::operator std::u16string() const {
 	// nb: napi requires that the returned string is null-terminated for some reason.
 	std::u16string string;
 	auto length = napi::invoke(napi_get_value_string_utf16, env(), napi_value{*this}, nullptr, 0);

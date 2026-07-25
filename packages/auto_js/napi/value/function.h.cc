@@ -4,7 +4,7 @@ import std;
 
 namespace js::napi {
 
-class value_for_function : public value_next<function_tag> {
+class local_for_function : public local_next<function_tag> {
 	public:
 		template <class Result = std::monostate>
 		auto apply(auto_environment auto& env, auto&& args) -> Result;
@@ -13,7 +13,7 @@ class value_for_function : public value_next<function_tag> {
 		auto call(auto_environment auto& env, auto&&... args) -> Result;
 
 		template <auto_environment Environment>
-		static auto make(Environment& env, auto function) -> value_of<function_tag>;
+		static auto make(Environment& env, auto function) -> local_of<function_tag>;
 
 	private:
 		template <class Result>

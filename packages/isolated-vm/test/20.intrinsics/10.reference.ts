@@ -1,24 +1,25 @@
+import type { Reference } from "@isolated-vm/experimental";
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import * as ivm from "@isolated-vm/experimental";
-import { expectComplete, unsafeEvalAsStringInRealm } from "./fixtures.js";
+import { Agent, expect } from "@isolated-vm/experimental";
+import { expectComplete, unsafeEvalAsStringInRealm } from "@isolated-vm/experimental/test/fixtures";
 
 await test("function reference invoke", async () => {
-	await using agent = await ivm.Agent.create();
-	const realm = await agent.createRealm();
+	await using agent = await Agent.create();
+	const realm = expect(await agent.createRealm());
 	await unsafeEvalAsStringInRealm(agent, realm, () => {
 		// @ts-expect-error
 		globalThis.fn = () => "wow";
 	});
 	const global = await realm.acquireGlobalObject();
-	const property = (await global.get("fn")) as ivm.Reference<() => unknown>;
+	const property = (await global.get("fn")) as Reference<() => unknown>;
 	const value = expectComplete(await property.invoke([]));
 	assert.equal(value, "wow");
 });
 
 await test("invoke function cross-param reference", async () => {
-	await using agent = await ivm.Agent.create();
-	const realm = await agent.createRealm();
+	await using agent = await Agent.create();
+	const realm = expect(await agent.createRealm());
 	await unsafeEvalAsStringInRealm(agent, realm, () => {
 		// @ts-expect-error
 		globalThis.fn = (...values: unknown[]) => values;
@@ -32,14 +33,14 @@ await test("invoke function cross-param reference", async () => {
 });
 
 await test("invoke function reference with circular object", async () => {
-	await using agent = await ivm.Agent.create();
-	const realm = await agent.createRealm();
+	await using agent = await Agent.create();
+	const realm = expect(await agent.createRealm());
 	await unsafeEvalAsStringInRealm(agent, realm, () => {
 		// @ts-expect-error
 		globalThis.fn = (value: unknown) => value;
 	});
 	const global = await realm.acquireGlobalObject();
-	const fn = (await global.get("fn")) as ivm.Reference<(value: unknown) => unknown>;
+	const fn = (await global.get("fn")) as Reference<(value: unknown) => unknown>;
 	const date = new Date();
 	const object: Record<string, any> = {
 		record: {},
@@ -55,8 +56,8 @@ await test("invoke function reference with circular object", async () => {
 });
 
 await test("get & set should not invoke proxies", async () => {
-	await using agent = await ivm.Agent.create();
-	const realm = await agent.createRealm();
+	await using agent = await Agent.create();
+	const realm = expect(await agent.createRealm());
 	await unsafeEvalAsStringInRealm(agent, realm, () => {
 		// @ts-expect-error
 		globalThis.prox = new Proxy({}, {
@@ -67,16 +68,16 @@ await test("get & set should not invoke proxies", async () => {
 		});
 	});
 	const global = await realm.acquireGlobalObject();
-	const prox = await global.get("prox");
+	const prox = expect(await global.get("prox"));
 	await prox.get("name");
-	assert.equal(await (await global.get("failed")).copy(), undefined);
-	await prox.set("name", undefined);
-	assert.equal(await (await global.get("failed")).copy(), undefined);
+	assert.equal(await expect(await global.get("failed")).copy(), undefined);
+	expect(await prox.set("name", undefined));
+	assert.equal(await expect(await global.get("failed")).copy(), undefined);
 
 	// sanity check
 	await unsafeEvalAsStringInRealm(agent, realm, () => {
 		// @ts-expect-error
 		globalThis.failed = true;
 	});
-	assert.equal(await (await global.get("failed")).copy(), true);
+	assert.equal(await expect(await global.get("failed")).copy(), true);
 });

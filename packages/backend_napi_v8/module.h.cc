@@ -53,11 +53,11 @@ export class module_handle {
 
 		auto agent() -> auto& { return agent_; }
 
-		auto evaluate(environment& env, realm_handle& realm) -> forward_promise_type;
-		auto link(environment& env, realm_handle& realm, module_handle_link_record link_record) -> forward_promise_type;
-		static auto class_template(environment& env) -> js::napi::value_of<class_tag_of<module_handle>>;
+		auto evaluate(environment& env, realm_handle* realm) -> forward_promise_type;
+		auto link(environment& env, realm_handle* realm, module_handle_link_record link_record) -> forward_promise_type;
+		static auto class_template(environment& env) -> js::napi::local_of<class_tag_of<module_handle>>;
 		static auto compile(environment& env, agent_handle& agent, js::string_t source_text, compile_module_options options) -> forward_promise_type;
-		static auto create_capability(environment& env, realm_handle& realm, js::napi::value_of<js::function_tag> make_capability, create_capability_options options) -> forward_promise_type;
+		static auto create_capability(environment& env, realm_handle& realm, js::napi::local_of<js::function_tag> make_capability, create_capability_options options) -> forward_promise_type;
 
 	private:
 		agent_handle agent_;
@@ -78,10 +78,10 @@ class subscriber_capability {
 		explicit subscriber_capability(private_constructor /*private*/) {};
 		auto accept_callback(callback_type callback) -> void;
 		auto take_subscriber() -> std::shared_ptr<subscriber>;
-		auto send(environment& env, js::forward<napi::value_of<>> message_local) -> bool;
-		static auto make(environment& env) -> js::napi::value_of<js::object_tag>;
+		auto send(environment& env, js::forward<napi::local_of<>> message_local) -> bool;
+		static auto make(environment& env) -> js::napi::local_of<js::object_tag>;
 
-		static auto class_template(environment& env) -> js::napi::value_of<js::class_tag_of<subscriber_capability>>;
+		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<subscriber_capability>>;
 
 	private:
 		util::lockable<callback_type> callback_;

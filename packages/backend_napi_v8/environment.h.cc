@@ -23,6 +23,7 @@ constexpr auto string_literals = std::tuple{
 	"interval"sv,
 	"line"sv,
 	"location"sv,
+	"memoryLimitBytes"sv,
 	"Module"sv,
 	"modules"sv,
 	"name"sv,
@@ -56,13 +57,13 @@ export class environment
 		explicit environment(napi_env env);
 		~environment();
 
-		auto agent_class() -> napi::value_of<function_tag> { return agent_class_.get(*this); }
+		auto agent_class() -> napi::local_of<function_tag> { return agent_class_.get(*this); }
 		auto cluster() -> iv8::isolated::cluster& { return cluster_; }
 		// NOLINTNEXTLINE(performance-unnecessary-value-param)
 		auto destroy_orphan_scheduler(std::any isolate_scheduler) -> void;
-		auto module_class() -> napi::value_of<function_tag> { return module_class_.get(*this); }
+		auto module_class() -> napi::local_of<function_tag> { return module_class_.get(*this); }
 
-		auto make_initialize() -> napi::value_of<function_tag>;
+		auto make_initialize() -> napi::local_of<function_tag>;
 
 	private:
 		iv8::isolated::cluster cluster_;
@@ -71,7 +72,7 @@ export class environment
 };
 
 // Common types
-using forward_callback_type = js::forward<js::napi::value_of<js::function_tag>>;
-using forward_promise_type = js::forward<js::napi::value_of<js::promise_tag>>;
+using forward_callback_type = js::forward<js::napi::local_of<js::function_tag>>;
+using forward_promise_type = js::forward<js::napi::local_of<js::promise_tag>>;
 
 } // namespace backend_napi_v8

@@ -1,6 +1,6 @@
 export module napi_js:reference;
 import :api;
-import :value_handle;
+import :handle.local_of;
 import std;
 import util;
 
@@ -72,7 +72,7 @@ class reference_handle : util::non_copyable {
 export template <class Tag>
 class reference : public reference<typename Tag::tag_type> {
 	public:
-		using value_type = value_of<Tag>;
+		using value_type = local_of<Tag>;
 		using reference<typename Tag::tag_type>::reference;
 
 		reference() = default;
@@ -86,7 +86,7 @@ class reference : public reference<typename Tag::tag_type> {
 };
 
 template <class Tag>
-reference(auto, value_of<Tag>) -> reference<Tag>;
+reference(auto, local_of<Tag>) -> reference<Tag>;
 
 // nb: Protected inheritance so that `remote<T> is not comparable to `reference<T>`.
 template <>

@@ -1,5 +1,5 @@
 export module isolated_vm:value;
-export import :handle.bound_value;
+export import :handle.local_of;
 export import :handle.value_of;
 export import :support.lock_fwd;
 export import :value.array_buffer;

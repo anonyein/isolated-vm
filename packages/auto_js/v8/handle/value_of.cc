@@ -9,9 +9,9 @@ namespace js::iv8 {
 template <class Tag>
 struct value_specialization;
 
-// nb: This corresponds to `js::napi::bound_value_of<T>`. `v8::Local<T>` is more like
-// `js::napi::value_of<T>`.
-template <class Tag>
+// nb: This corresponds to `js::napi::value_of<T>`. `v8::Local<T>` is more like
+// `js::napi::local_of<T>`.
+export template <class Tag>
 class value_of : public value_specialization<Tag>::type {
 	public:
 		using value_specialization<Tag>::type::type;
@@ -50,8 +50,12 @@ struct value_specialization<date_tag> : std::type_identity<class value_for_date>
 template <>
 struct value_specialization<external_tag> : std::type_identity<class value_for_external> {};
 
+// TODO: value_for_record
 template <>
 struct value_specialization<object_tag> : std::type_identity<class value_for_object> {};
+
+template <>
+struct value_specialization<list_tag> : std::type_identity<class value_for_object> {};
 
 template <>
 struct value_specialization<array_buffer_tag> : std::type_identity<class value_for_array_buffer> {};

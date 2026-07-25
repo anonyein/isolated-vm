@@ -16,7 +16,7 @@ auto realm_handle::create(environment& env, agent_handle& agent) -> forward_prom
 	auto [ promise, resolver ] = make_promise(
 		env,
 		[](environment& env, agent_handle agent, js::iv8::shared_remote<v8::Context> realm) -> auto {
-			return js::forward{class_template(env).construct(env, std::move(agent), std::move(realm))};
+			return js::forward{class_template(env)->construct(env, std::move(agent), std::move(realm))};
 		}
 	);
 	agent.schedule(
@@ -38,7 +38,7 @@ auto realm_handle::acquire_global_object(environment& env) -> forward_promise_ty
 	auto [ promise, resolver ] = make_promise(
 		env,
 		[](environment& env, reference_handle reference) -> auto {
-			return js::forward{reference_handle::class_template(env).construct(env, std::move(reference))};
+			return js::forward{reference_handle::class_template(env)->construct(env, std::move(reference))};
 		}
 	);
 	agent_.schedule(
@@ -67,7 +67,7 @@ auto realm_handle::instantiate_runtime(environment& env) -> forward_promise_type
 	auto [ promise, resolver ] = make_promise(
 		env,
 		[](environment& env, agent_handle agent, js::iv8::shared_remote<v8::Module> module_record) -> auto {
-			return js::forward{module_handle::class_template(env).construct(env, std::move(agent), std::move(module_record))};
+			return js::forward{module_handle::class_template(env)->construct(env, std::move(agent), std::move(module_record))};
 		}
 	);
 	agent_.schedule(
@@ -87,7 +87,7 @@ auto realm_handle::instantiate_runtime(environment& env) -> forward_promise_type
 	return js::forward{promise};
 }
 
-auto realm_handle::class_template(environment& env) -> js::napi::value_of<class_tag_of<realm_handle>> {
+auto realm_handle::class_template(environment& env) -> js::napi::local_of<class_tag_of<realm_handle>> {
 	return env.class_template(
 		std::type_identity<realm_handle>{},
 		js::class_template{

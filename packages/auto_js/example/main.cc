@@ -139,11 +139,11 @@ class canvas {
 		auto get_created_at() const -> js::js_clock::time_point { return created_at_; }
 
 		// Static factory — called as Canvas.create(name) from JavaScript.
-		static auto create(environment& env, std::u8string name) -> js::forward<js::napi::value_of<js::object_tag>> {
-			return js::forward{canvas::class_template(env).construct(env, std::move(name))};
+		static auto create(environment& env, std::u8string name) -> js::forward<js::napi::local_of<js::object_tag>> {
+			return js::forward{canvas::class_template(env)->construct(env, std::move(name))};
 		}
 
-		static auto class_template(environment& env) -> js::napi::value_of<js::class_tag_of<canvas>> {
+		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<canvas>> {
 			return env.class_template(
 				std::type_identity<canvas>{},
 				js::class_template{
@@ -240,10 +240,11 @@ auto area(shape value) -> double {
 }
 
 // Variant: accepts either a string or a number; resolved from the JS value type.
-auto describe_value(std::variant<std::u16string, double, std::int32_t> value) -> std::u8string {
+auto describe_value(std::variant<std::u16string, std::string, double, std::int32_t> value) -> std::u8string {
 	return std::visit(
 		util::overloaded{
 			[](const std::u16string& /*value*/) -> std::u8string { return u8"string"; },
+			[](const std::string& /*value*/) -> std::u8string { return u8"string"; },
 			[](double /*value*/) -> std::u8string { return u8"number"; },
 			[](std::int32_t /*value*/) -> std::u8string { return u8"int32"; },
 		},

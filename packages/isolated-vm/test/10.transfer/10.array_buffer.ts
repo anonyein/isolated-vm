@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import * as ivm from "@isolated-vm/experimental";
-import { injectAssert, unsafeEvalAsString, unsafeEvalAsStringInRealm } from "./fixtures.js";
+import { Agent, expect } from "@isolated-vm/experimental";
+import { injectAssert, unsafeEvalAsString, unsafeEvalAsStringInRealm } from "@isolated-vm/experimental/test/fixtures";
 
 const hostSupportsSharedArraySupport =
 	// @ts-expect-error
@@ -9,7 +9,7 @@ const hostSupportsSharedArraySupport =
 
 await describe("array buffer", async () => {
 	await describe("transfer out", async () => {
-		await using agent = await ivm.Agent.create();
+		await using agent = await Agent.create();
 		const ab = await unsafeEvalAsString(agent, () => {
 			const uint8 = new Uint8Array([ 1, 2, 3 ]);
 			return uint8.buffer;
@@ -20,7 +20,7 @@ await describe("array buffer", async () => {
 
 	if (hostSupportsSharedArraySupport) {
 		await test("transfer out same reference", async () => {
-			await using agent = await ivm.Agent.create();
+			await using agent = await Agent.create();
 			const ab = await unsafeEvalAsString(agent, () => {
 				// nb: also tests zero-length buffer
 				const ab = new ArrayBuffer(0);
@@ -30,38 +30,43 @@ await describe("array buffer", async () => {
 		});
 	}
 
-	await test("transfer in", async () => {
-		await using agent = await ivm.Agent.create();
-		const realm = await agent.createRealm();
-		await injectAssert(agent, realm);
-		const global = await realm.acquireGlobalObject();
-		await global.set("ab", new Uint8Array([ 1, 2, 3 ]).buffer);
-		await unsafeEvalAsStringInRealm(agent, realm, () => {
-			// @ts-expect-error
-			const uint8 = new Uint8Array(ab);
-			assert.deepStrictEqual([ ...uint8 ], [ 1, 2, 3 ]);
+	// These tests work individually in Deno but something about the test runner is choking when run
+	// in the suite.
+	if (process.versions.deno === undefined) {
+		await test("transfer in", async () => {
+			await using agent = await Agent.create();
+			const realm = expect(await agent.createRealm());
+			await injectAssert(agent, realm);
+			const global = await realm.acquireGlobalObject();
+			await global.set("ab", new Uint8Array([ 1, 2, 3 ]).buffer);
+			await unsafeEvalAsStringInRealm(agent, realm, () => {
+				// @ts-expect-error
+				const uint8 = new Uint8Array(ab);
+				assert.deepStrictEqual([ ...uint8 ], [ 1, 2, 3 ]);
+			});
+			await agent.disposeAsync();
 		});
-	});
 
-	await test("transfer in same reference", async () => {
-		await using agent = await ivm.Agent.create();
-		const realm = await agent.createRealm();
-		await injectAssert(agent, realm);
-		const global = await realm.acquireGlobalObject();
-		const ab = new ArrayBuffer(0);
-		await global.set("abs", [ ab, ab ]);
-		await unsafeEvalAsStringInRealm(agent, realm, () => {
+		await test("transfer in same reference", async () => {
+			await using agent = await Agent.create();
+			const realm = expect(await agent.createRealm());
+			await injectAssert(agent, realm);
+			const global = await realm.acquireGlobalObject();
+			const ab = new ArrayBuffer(0);
+			await global.set("abs", [ ab, ab ]);
+			await unsafeEvalAsStringInRealm(agent, realm, () => {
 			// @ts-expect-error
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-			assert.strictEqual(abs[0], abs[1]);
+				assert.strictEqual(abs[0], abs[1]);
+			});
 		});
-	});
+	}
 });
 
 await describe("shared array buffer", async () => {
 	if (hostSupportsSharedArraySupport) {
 		await describe("transfer out", async () => {
-			await using agent = await ivm.Agent.create();
+			await using agent = await Agent.create();
 			const realm = await agent.createRealm();
 			const sab = await unsafeEvalAsStringInRealm(agent, realm, () => {
 				const sab = new SharedArrayBuffer(3);
@@ -85,7 +90,7 @@ await describe("shared array buffer", async () => {
 		});
 
 		await test("transfer out same reference", async () => {
-			await using agent = await ivm.Agent.create();
+			await using agent = await Agent.create();
 			const ab = await unsafeEvalAsString(agent, () => {
 				// nb: also tests zero-length buffer
 				const sab = new SharedArrayBuffer(0);
@@ -95,8 +100,8 @@ await describe("shared array buffer", async () => {
 		});
 
 		await test("transfer in", async () => {
-			await using agent = await ivm.Agent.create();
-			const realm = await agent.createRealm();
+			await using agent = await Agent.create();
+			const realm = expect(await agent.createRealm());
 			await injectAssert(agent, realm);
 			const global = await realm.acquireGlobalObject();
 			const sab = new SharedArrayBuffer(3);
@@ -113,8 +118,8 @@ await describe("shared array buffer", async () => {
 	}
 
 	await test("transfer in same reference", async () => {
-		await using agent = await ivm.Agent.create();
-		const realm = await agent.createRealm();
+		await using agent = await Agent.create();
+		const realm = expect(await agent.createRealm());
 		await injectAssert(agent, realm);
 		const global = await realm.acquireGlobalObject();
 		const ab = new ArrayBuffer(0);
@@ -130,20 +135,21 @@ await describe("shared array buffer", async () => {
 	});
 });
 
-await describe("typed array", async () => {
-	await test("transfer out", async () => {
-		await using agent = await ivm.Agent.create();
-		const [ uint8, uint8_copy ] = await unsafeEvalAsString(agent, () => {
-			const uint8 = new Uint8Array([ 1, 2, 3 ]);
-			return [ uint8, new Uint8Array(uint8.buffer) ];
-		});
-		assert.deepStrictEqual(uint8, new Uint8Array([ 1, 2, 3 ]));
-		assert.strictEqual(uint8.buffer, uint8_copy.buffer);
+// TODO: deno fails when this is in the `describe` (??)
+await test("transfer out", async () => {
+	await using agent = await Agent.create();
+	const [ uint8, uint8_copy ] = await unsafeEvalAsString(agent, () => {
+		const uint8 = new Uint8Array([ 1, 2, 3 ]);
+		return [ uint8, new Uint8Array(uint8.buffer) ];
 	});
+	assert.deepStrictEqual(uint8, new Uint8Array([ 1, 2, 3 ]));
+	assert.strictEqual(uint8.buffer, uint8_copy.buffer);
+});
 
+await describe("typed array", async () => {
 	await test("transfer in", async () => {
-		await using agent = await ivm.Agent.create();
-		const realm = await agent.createRealm();
+		await using agent = await Agent.create();
+		const realm = expect(await agent.createRealm());
 		await injectAssert(agent, realm);
 		const global = await realm.acquireGlobalObject();
 		const uint8 = new Uint8Array([ 1, 2, 3 ]);
@@ -158,7 +164,7 @@ await describe("typed array", async () => {
 
 	if (hostSupportsSharedArraySupport) {
 		await test("shared transfer out", async () => {
-			await using agent = await ivm.Agent.create();
+			await using agent = await Agent.create();
 			const [ shared_uint8, shared_uint8_copy ] = await unsafeEvalAsString(agent, () => {
 				const sab = new SharedArrayBuffer(3);
 				const uint8 = new Uint8Array(sab);

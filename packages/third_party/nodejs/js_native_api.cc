@@ -3,7 +3,11 @@ module;
 // https://nodejs.org/api/n-api.html
 #include <js_native_api.h>
 export module nodejs:js_native_api;
+import std;
 // NOLINTBEGIN(misc-unused-using-decls)
+
+template <class Result, class... Params>
+constexpr auto unimplemented = [](Params...) -> Result { std::terminate(); };
 
 export using ::napi_add_finalizer;
 export using ::napi_call_function;
@@ -93,12 +97,22 @@ export using ::napi_type_tag_object;
 export using ::napi_typeof;
 export using ::napi_unwrap;
 export using ::napi_wrap;
+#ifdef NODE_API_EXPERIMENTAL_HAS_CREATE_EXTERNAL_SHAREDARRAYBUFFER
 export using ::node_api_create_external_sharedarraybuffer;
+#endif
 export using ::node_api_create_property_key_latin1;
 export using ::node_api_create_property_key_utf16;
 export using ::node_api_create_property_key_utf8;
 export using ::node_api_create_syntax_error;
+#ifdef NODE_API_EXPERIMENTAL_HAS_SHAREDARRAYBUFFER
+export constexpr auto node_api_has_sharedarraybuffer = true;
 export using ::node_api_is_sharedarraybuffer;
+#else
+export constexpr auto node_api_has_sharedarraybuffer = false;
+export auto node_api_is_sharedarraybuffer(napi_env, napi_value, bool*) -> napi_status {
+	std::terminate();
+};
+#endif
 export using ::node_api_throw_syntax_error;
 
 // NOLINTEND(misc-unused-using-decls)

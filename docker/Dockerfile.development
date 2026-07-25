@@ -2,7 +2,6 @@ FROM debian
 COPY --from=isolated-vm/depot_tools depot_tools depot_tools
 COPY --from=isolated-vm/node opt opt
 COPY --from=isolated-vm/node_sources node node
-COPY --from=isolated-vm/v8 v8/out v8/out
 COPY --from=isolated-vm/v8_sources v8 v8
 ENV PATH=/opt/bin:$PATH:/depot_tools
 ARG LLVM_VERSION
@@ -31,6 +30,7 @@ RUN <<DONE
 		ninja-build \
 		pkg-config \
 		python3 \
+		unzip \
 		vim \
 		yq \
 	;
@@ -38,9 +38,18 @@ RUN <<DONE
 	# curl https://archives.boost.io/release/1.88.0/source/boost_1_88_0.tar.gz | tar xz --strip-components=2 -C /usr/include/boost boost_1_88_0/boost
 	npm install -g pnpm
 
+	# Install Bun
+	curl -fsSL https://bun.com/install | bash
+	ln -s /root/.bun/bin/bun /usr/bin/bun
+	bun upgrade --canary
+
+	# Install Deno
+	curl -fsSL https://deno.land/install.sh | sh
+	ln -s /root/.deno/bin/deno /usr/bin/deno
+	deno upgrade --canary
+
 	# Configure gclient
 	gclient config --unmanaged $(git -C v8 config --get remote.origin.url)
-	echo 'entries = {}' > .gclient_entries
 
 	# Link clang-N binaries and libraries to system paths
 	ln -fs /lib/"llvm-$LLVM_VERSION"/bin/* /usr/bin/

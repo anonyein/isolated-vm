@@ -12,30 +12,47 @@ auto agent_handle_value::create(environment& env, std::optional<create_options> 
 	auto options = std::move(options_optional).value_or(create_options{});
 	auto& cluster = env.cluster();
 	auto [ promise, resolver ] = make_promise(env, [](environment& env, agent_handle agent) -> auto {
-		auto class_template = js::napi::value_of<class_tag_of<agent_handle_value>>::from(env.agent_class());
-		return js::forward{class_template.construct(env, std::move(agent))};
+		auto class_template = js::napi::local_of<class_tag_of<agent_handle_value>>::from(env.agent_class());
+		return js::forward{class_template->construct(env, std::move(agent))};
 	});
-	auto clock_ = std::visit(
-		util::overloaded{
-			[](const clock_deterministic& options) -> clock::any_clock {
-				return clock::deterministic{options.epoch, js::js_clock::duration{options.interval}};
+	auto memory_policy_ = [ & ] -> memory_policy::covariant {
+		auto limit = options.memory_limit_bytes.value_or(0);
+		if (limit == 0) {
+			return {};
+		} else {
+			auto casted = static_cast<std::size_t>(limit);
+			if (static_cast<double>(casted) != limit) {
+				throw js::range_error("Invalid memoryLimitBytes: {}\n", limit);
+			}
+			return {std::type_identity<memory_policy::limited>{}, limit};
+		}
+	};
+	auto clock_ = [ & ] -> clock::any_clock {
+		auto clock_option = options.clock.value_or(clock_system{});
+		return std::visit(
+			util::overloaded{
+				[](const clock_deterministic& options) -> clock::any_clock {
+					return clock::deterministic{options.epoch, js::js_clock::duration{options.interval}};
+				},
+				[](const clock_microtask& options) -> clock::any_clock {
+					return clock::microtask{options.epoch};
+				},
+				[](const clock_realtime& options) -> clock::any_clock {
+					return clock::realtime{options.epoch};
+				},
+				[](const clock_system& /*options*/) -> clock::any_clock {
+					return clock::system{};
+				},
 			},
-			[](const clock_microtask& options) -> clock::any_clock {
-				return clock::microtask{options.epoch};
-			},
-			[](const clock_realtime& options) -> clock::any_clock {
-				return clock::realtime{options.epoch};
-			},
-			[](const clock_system& /*options*/) -> clock::any_clock {
-				return clock::system{};
-			},
-		},
-		options.clock.value_or(clock_system{})
-	);
+			clock_option
+		);
+	};
+
 	cluster.make_agent(
 		[](const js::iv8::isolated::agent_handle::lock& lock) -> auto { return agent_environment{lock}; },
 		{
-			.clock = clock_,
+			.memory_policy = memory_policy_(),
+			.clock = clock_(),
 			.random_seed = options.random_seed,
 		},
 		[ dispatch = std::move(resolver) ](
@@ -73,7 +90,7 @@ auto agent_handle_value::dispose_async(environment& env) -> forward_promise_type
 	return js::forward{promise};
 }
 
-auto agent_handle_value::class_template(environment& env) -> js::napi::value_of<class_tag_of<agent_handle_value>> {
+auto agent_handle_value::class_template(environment& env) -> js::napi::local_of<class_tag_of<agent_handle_value>> {
 	return env.class_template(
 		std::type_identity<agent_handle_value>{},
 		js::class_template{

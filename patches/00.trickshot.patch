@@ -1,5 +1,5 @@
 diff --git a/BUILD.gn b/BUILD.gn
-index 382c7d3ed44..235ba4d9cd9 100644
+index 382c7d3ed4..235ba4d9cd 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
 @@ -16,6 +16,7 @@ import("//third_party/icu/config.gni")
@@ -33,7 +33,7 @@ index 382c7d3ed44..235ba4d9cd9 100644
        "src/base/platform/platform-posix.cc",
 diff --git a/gni/trickshot.gni b/gni/trickshot.gni
 new file mode 100644
-index 00000000000..af6d5f9f385
+index 0000000000..af6d5f9f38
 --- /dev/null
 +++ b/gni/trickshot.gni
 @@ -0,0 +1,4 @@

@@ -18,10 +18,10 @@ export class reference_handle {
 		reference_handle(const agent_handle::lock& lock, agent_handle agent, js::iv8::shared_remote<v8::Context> realm, v8::Local<v8::Object> value);
 		auto copy(environment& env) -> forward_promise_type;
 		auto get(environment& env, js::string_t name) -> forward_promise_type;
-		auto set(environment& env, js::string_t name, js::forward<js::napi::value_of<>> value_local) -> forward_promise_type;
-		auto invoke(environment& env, js::forward<js::napi::value_of<list_tag>> params_local) -> forward_promise_type;
+		auto set(environment& env, js::string_t name, js::forward<js::napi::local_of<>> value_local) -> forward_promise_type;
+		auto invoke(environment& env, js::forward<js::napi::local_of<list_tag>> params_local) -> forward_promise_type;
 
-		static auto class_template(environment& env) -> js::napi::value_of<class_tag_of<reference_handle>>;
+		static auto class_template(environment& env) -> js::napi::local_of<class_tag_of<reference_handle>>;
 
 	private:
 		agent_handle agent_;

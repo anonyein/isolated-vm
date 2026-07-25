@@ -7,8 +7,8 @@ import v8_js;
 namespace isolated_vm {
 using namespace js;
 
-// value_for_function
-auto value_for_function::invoke(const runtime_lock& lock, value_of<> that, std::span<value_of<>> argv) -> value_of<> {
+// local_for_function
+auto local_for_function::invoke(const runtime_lock& lock, local_of<> that, std::span<local_of<>> argv) -> local_of<> {
 	auto witness = unwrap_lock_witness(lock);
 	auto* v8_argv = reinterpret_cast<v8::Local<v8::Value>*>(argv.data());
 	auto result =

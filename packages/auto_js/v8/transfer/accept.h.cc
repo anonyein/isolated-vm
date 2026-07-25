@@ -1,5 +1,6 @@
 export module v8_js:accept;
 import :callback_storage;
+import :handle.value;
 import :hash;
 import :value;
 import auto_js;
@@ -370,6 +371,20 @@ struct accept_v8_property_value {
 		accept_value<Meta, Type> second;
 };
 
+// Forward `value_of<T>`
+template <class Tag>
+struct accept_v8_value_of {
+	public:
+		explicit accept_v8_value_of(auto* /*transfer*/) {}
+
+		auto operator()(Tag /*tag*/, visit_holder /*visit*/, value_of<Tag> subject) const -> value_of<Tag> {
+			return subject;
+		}
+
+		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+};
+
 // `return_into(...)`
 struct return_into_marker {};
 
@@ -473,6 +488,12 @@ struct accept<Meta, v8::Local<Type>> : iv8::accept_v8_primitive {
 template <class Meta, class Type>
 struct accept<Meta, v8::Local<Type>> : iv8::accept_v8_value_with<typename Meta::accept_context_type> {
 		using iv8::accept_v8_value_with<typename Meta::accept_context_type>::accept_v8_value_with;
+};
+
+// forward `value_of<T>`
+template <class Meta, class Tag>
+struct accept<Meta, iv8::value_of<Tag>> : iv8::accept_v8_value_of<Tag> {
+		using iv8::accept_v8_value_of<Tag>::accept_v8_value_of;
 };
 
 // templates

@@ -1,10 +1,10 @@
-// ninja -C build auto_js
+// ninja -C build auto_isolated_js
 #include <version>
 import auto_js;
 import std;
 import util;
 using namespace std::literals;
-#if __clang_major__ >= 19 && _LIBCPP_VERSION
+#if __clang_major__ >= 19
 
 namespace js {
 
@@ -15,6 +15,7 @@ static_assert(transfer<std::int32_t>(1.0) == 1);
 static_assert(transfer_strict<double>(std::int32_t{1}) == 1.0);
 static_assert(transfer_strict<std::string>("hello"sv) == "hello"s);
 static_assert(transfer_strict<std::string>(util::cw<u"hello">) == "hello"s);
+static_assert(transfer_strict<std::u16string>("hello"sv) == u"hello"s);
 
 // Variants
 template <class Type>
@@ -39,6 +40,8 @@ static_assert(transfer<double>(std::variant<int, double>{1.1}) == 1.1);
 constexpr auto string_variant = std::variant<std::string>{"hello"};
 constexpr auto visited_string = transfer<std::variant<std::monostate, std::string>>(string_variant);
 static_assert(variant_is_equal_to(visited_string, "hello"s));
+// TODO(?) fails: I might wait for reflection for the variant holes
+// static_assert(variant_is_equal_to(transfer<std::variant<std::u16string>>("hello"s), u"hello"s));
 
 // Recursive variants
 static_assert(variant_is_equal_to(transfer<value_t>(bigint{1'234}), bigint{1'234}));
