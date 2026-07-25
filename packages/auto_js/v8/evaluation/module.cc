@@ -164,8 +164,8 @@ auto module_record::link(context_lock_witness lock, v8::Local<v8::Module> module
 				// Build specifier->index map for this referrer from its request list.
 				auto index_map = std::unordered_map<std::u16string, std::size_t>{};
 				auto reqs = module_record::requests(lock, referrer);
-				for (auto [ idx, req ] : std::views::enumerate(reqs)) {
-					index_map.emplace(req.specifier(), static_cast<std::size_t>(idx));
+				for (auto idx = 0UZ; idx < reqs.size(); ++idx) {
+					index_map.emplace(reqs.at(idx).specifier(), idx);
 				}
 				cache_it = cache.emplace(referrer, std::move(index_map)).first;
 			}

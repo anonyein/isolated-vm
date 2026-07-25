@@ -38,6 +38,15 @@
 _LIBCPP_PUSH_MACROS
 #include <__undef_macros>
 
+// `_LIBCPP_ASSERT_PEDANTIC` was introduced in a newer libc++ (clang 22-era).
+// The NDK r27 libc++ (18.x) used for the Android cross build lacks it, so this
+// backported header fails to compile there. Provide a no-op fallback when the
+// macro is absent; the assertion is a debug-only hardening check and dropping
+// it does not change release behavior.
+#ifndef _LIBCPP_ASSERT_PEDANTIC
+#  define _LIBCPP_ASSERT_PEDANTIC(expression, message) ((void)0)
+#endif
+
 _LIBCPP_BEGIN_NAMESPACE_STD
 
 #if _LIBCPP_STD_VER >= 23
