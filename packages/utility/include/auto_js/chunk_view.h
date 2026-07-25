@@ -341,7 +341,14 @@ struct __fn {
 		template <class _Np>
 			requires constructible_from<decay_t<_Np>, _Np>
 		[[nodiscard]] constexpr auto operator()(_Np&& __n) const noexcept(is_nothrow_constructible_v<decay_t<_Np>, _Np>) {
+			// libc++ >= 19 wraps range-adaptor closures with `__pipeable`; libc++ 18
+			// (the NDK sysroot used for the Android cross build) instead uses
+			// `__range_adaptor_closure_t`. Select the right helper by version.
+#if _LIBCPP_VERSION >= 190000
 			return __pipeable(std::__bind_back(*this, std::forward<_Np>(__n)));
+#else
+			return __range_adaptor_closure_t(std::__bind_back(*this, std::forward<_Np>(__n)));
+#endif
 		}
 };
 } // namespace __chunk

@@ -105,7 +105,6 @@ auto module_record::create_synthetic(
 	auto module_record = v8::Module::CreateSyntheticModule(lock.isolate(), module_name, v8_export_names, evaluation_steps);
 
 	// "Link" the module, which is a no-op
-	// auto null_callback = v8::Module::ResolveModuleByIndexCallback{nullptr};
 	auto null_callback = v8::Module::ResolveModuleCallback{nullptr};
 	unmaybe(module_record->InstantiateModule(lock.context(), null_callback));
 
@@ -136,26 +135,62 @@ auto module_record::link(context_lock_witness lock, v8::Local<v8::Module> module
 	};
 	thread_local auto* linker_ptr = &linker;
 
-	// v8 linker callback
-	auto v8_callback = v8::Module::ResolveModuleByIndexCallback{
+	// v8 linker callback.
+	//
+	// nb: V8 13.6 (as embedded in the Javet Node .so this Android build links
+	// against) only provides the by-specifier `ResolveModuleCallback`; the
+	// by-index `ResolveModuleByIndexCallback` is a newer (V8 14.x) API the
+	// upstream sources were written for. We bridge back to the index-based
+	// `linker` by recovering the request index from the specifier: for a given
+	// referrer, `GetModuleRequests()` is ordered identically to the payload
+	// slice, so the position of the matching specifier IS the index. We build
+	// that specifier->index map lazily per referrer and cache it.
+	thread_local std::unordered_map<v8::Local<v8::Module>, std::unordered_map<std::u16string, std::size_t>, address_hash>* specifier_index_by_referrer_ptr;
+	auto specifier_index_by_referrer = std::unordered_map<v8::Local<v8::Module>, std::unordered_map<std::u16string, std::size_t>, address_hash>{};
+	specifier_index_by_referrer_ptr = &specifier_index_by_referrer;
+	thread_local context_lock_witness* lock_ptr;
+	lock_ptr = &lock;
+	auto v8_callback = v8::Module::ResolveModuleCallback{
 		[](
 			v8::Local<v8::Context> /*context*/,
-			std::size_t module_request_index,
+			v8::Local<v8::String> specifier,
+			v8::Local<v8::FixedArray> /*import_attributes*/,
 			v8::Local<v8::Module> referrer
 		) -> v8::MaybeLocal<v8::Module> {
-			return (*linker_ptr)(referrer, module_request_index);
+			auto& lock = *lock_ptr;
+			auto& cache = *specifier_index_by_referrer_ptr;
+			auto cache_it = cache.find(referrer);
+			if (cache_it == cache.end()) {
+				// Build specifier->index map for this referrer from its request list.
+				auto index_map = std::unordered_map<std::u16string, std::size_t>{};
+				auto reqs = module_record::requests(lock, referrer);
+				for (auto [ idx, req ] : std::views::enumerate(reqs)) {
+					index_map.emplace(req.specifier(), static_cast<std::size_t>(idx));
+				}
+				cache_it = cache.emplace(referrer, std::move(index_map)).first;
+			}
+			auto specifier_str = js::transfer_out_strict<std::u16string>(specifier, lock);
+			auto idx_it = cache_it->second.find(specifier_str);
+			if (idx_it == cache_it->second.end()) {
+				throw js::runtime_error{u"Module specifier not found in link record"};
+			}
+			return (*linker_ptr)(referrer, idx_it->second);
 		}
 	};
 	unmaybe(module->InstantiateModule(lock.context(), v8_callback));
 	linker_ptr = nullptr;
+	specifier_index_by_referrer_ptr = nullptr;
+	lock_ptr = nullptr;
 }
 
 auto module_record::link(context_lock_witness lock, v8::Local<v8::Module> module) -> void {
 	// Probably a synthetic module
-	auto v8_callback = v8::Module::ResolveModuleByIndexCallback{
+	// nb: by-specifier `ResolveModuleCallback` for V8 13.6 (see note above).
+	auto v8_callback = v8::Module::ResolveModuleCallback{
 		[](
 			v8::Local<v8::Context> /*context*/,
-			std::size_t /*module_request_index*/,
+			v8::Local<v8::String> /*specifier*/,
+			v8::Local<v8::FixedArray> /*import_attributes*/,
 			v8::Local<v8::Module> /*referrer*/
 		) -> v8::MaybeLocal<v8::Module> {
 			std::terminate();
