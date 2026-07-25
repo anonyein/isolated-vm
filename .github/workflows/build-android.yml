@@ -275,10 +275,20 @@ jobs:
           # libc++_shared runtime the Javet .so was linked against, and link
           # libc++ dynamically. libc++_shared.so lives at
           #   <sysroot>/usr/lib/<triplet>/libc++_shared.so
-          add_compile_options(-stdlib=libc++)
-          add_link_options(-stdlib=libc++)
-          link_directories("\${_sysroot}/usr/lib/${TRIPLET}")
-          link_libraries(c++_shared)
+          #
+          # CRITICAL: -stdlib=libc++ must reach CMake's compiler-detection
+          # try-compiles, NOT just the real targets. `import std` support is
+          # decided during enable_language(CXX) (the project() call): CMake
+          # compiles a probe and inspects CMAKE_CXX_STANDARD_LIBRARY. With plain
+          # add_compile_options the probe runs against the standalone clang's
+          # default libstdc++, so CMake concludes import std is unsupported and
+          # never creates the __CMAKE::CXX26 target that every CXX_MODULE_STD
+          # target needs. *_FLAGS_INIT are applied during that detection, so we
+          # use them to force libc++ early. (add_compile_options is not.)
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++")
+          set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
+          set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
 
           set(CMAKE_FIND_ROOT_PATH "\${_sysroot}")
           # PROGRAM NEVER: use host tools (node, sh) for the npm resolver.
