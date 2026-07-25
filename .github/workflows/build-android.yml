@@ -393,7 +393,7 @@ jobs:
             -DCMAKE_MODULE_PATH="$(pnpm exec auto_js_cmake_include)" \
             -DCMAKE_PREFIX_PATH=/tmp/fake-boost \
             -DBoost_DIR=/tmp/fake-boost/lib/cmake/Boost \
-            -DNODE_DIST_DIR="deps/nodejs/${NODE_HEADERS}" \
+            -DNODE_DIST_DIR="${PWD}/deps/nodejs/${NODE_HEADERS}" \
             -DV8_LIBRARY_TYPE=shared \
             -DV8_LIBRARY_PATH="${PWD}/deps/javet" \
             -DV8_INCLUDE_DIR="${NODE_INC}" \
