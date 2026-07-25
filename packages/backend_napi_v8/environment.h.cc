@@ -55,12 +55,9 @@ constexpr auto class_names = std::array{
 };
 
 // Instance of the `isolated-vm` module, once per nodejs environment.
-// BISECT EXPERIMENT (temporary): string_table<> base commented out to determine
-// whether it is the trigger for the clang frontend segfault during BMI emission.
-// Revert after diagnosis.
 export class environment
 		: public napi::environment,
-			// public napi::string_table<string_literals>,
+			public napi::string_table<string_literals>,
 			public napi::class_template_references<class_names> {
 	public:
 		explicit environment(napi_env env);
