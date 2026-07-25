@@ -203,144 +203,41 @@ jobs:
           ln -sf "${JAVET_SO_NAME}" "deps/javet/libjavet.so"
           ls -l deps/javet
 
-      # `import std` support. This is the single highest-risk step of the whole
-      # port. Two facts drive the implementation:
+      # `import std` support.
       #
-      # 1) ABI namespace. The NDK's libc++ uses the inline namespace
-      #    `std::__ndk1::` (see __config_site: _LIBCPP_ABI_NAMESPACE = __ndk1),
-      #    NOT upstream's `std::__1::`. The Javet .so is linked against the NDK's
-      #    libc++_shared, so every V8 API that passes a std type across the
-      #    boundary has `__ndk1` in its mangled name. We therefore compile against
-      #    the NDK's libc++ headers (enforced via CMAKE_SYSROOT); the `std` module
-      #    is built from those same headers at configure time, landing in __ndk1.
+      # We now compile against the standalone LLVM 22's OWN libc++ headers (see the
+      # toolchain step for why: the NDK's libc++ 18 headers crash clang 22's
+      # module/BMI machinery). That means we can also use LLVM 22's OWN bundled
+      # std module -- std.cppm + libc++.modules.json ship in the tarball under
+      # lib/<host-triple>/. Its `export using std::x;` list matches the v22 headers
+      # exactly, so none of the earlier libc++-18 workarounds (fetching libcxx
+      # source, expanding @LIBCXX_MODULE_STD_INCLUDE_SOURCES@, stripping C++26
+      # saturation names) are needed.
       #
-      # 2) How CMake 4.0 finds the std module. Contrary to earlier assumptions,
-      #    CMake 4.0 does NOT read a -DCMAKE_CXX_STDLIB_MODULES_JSON variable for
-      #    Clang. Instead (Compiler/Clang-CXX-CXXImportStd.cmake) it runs:
-      #        clang++ <target> -print-file-name=libc++.modules.json
-      #    and requires the returned path to EXIST. It then parses that json and
-      #    builds the `std` module from the std.cppm it points at. The standalone
-      #    LLVM ships this json only for its host triple, so for an Android target
-      #    the path comes back non-existent and CMake declares import std
-      #    unsupported (no __CMAKE::CXX26 target -> every CXX_MODULE_STD target
-      #    errors). The fix is to place our own libc++.modules.json at exactly the
-      #    location `-print-file-name` resolves to for the Android target.
+      # How CMake 4.x finds it (Compiler/Clang-CXX-CXXImportStd.cmake): it runs a
+      # BARE probe with NO --target:
+      #     clang++ -print-file-name=libc++.modules.json
+      # and requires the returned path to EXIST. Since we use the host libc++
+      # headers, the standalone LLVM's own host json is exactly right and already
+      # sits where the bare probe resolves. We just verify it is there.
       #
-      # The `std` module *source* (std.cppm) is a list of `export using std::x;`
-      # re-exports; its symbol list must match the libc++ header version or
-      # `export using` names symbols the headers lack. NDK r27's libc++ tracks
-      # LLVM ~18, so we use libc++ 18.1.8's std.cppm (NOT the compiler's v20 copy).
+      # ABI note: the module is compiled at configure time with the same CXX flags
+      # as everything else, including -D_LIBCPP_ABI_NAMESPACE=__ndk1, so the `std`
+      # module lands in the __ndk1 namespace to match the Javet .so runtime.
       - name: Prepare `import std` module manifest
         id: import_std
-        env:
-          LIBCXX_STD_VERSION: "18.1.8"
         run: |
           set -eux
-          mkdir -p /tmp/std-module
-          # Fetch the FULL libc++ modules tree, not just the two .cppm.in files.
-          # The template `std.cppm.in` ends with the placeholder
-          # `@LIBCXX_MODULE_STD_INCLUDE_SOURCES@` which upstream's CMake expands to
-          # a list of `#include "std/<hdr>.inc"` lines -- and it is THOSE .inc files
-          # that carry every `export using std::X;`. Emptying the placeholder (an
-          # earlier mistake) yields a std module that includes all headers but
-          # exports nothing, so consumers see `std::size_t`/`priority_queue`/etc.
-          # as "not declared". We must ship the whole std/ + std.compat/ trees and
-          # reproduce CMake's placeholder expansion.
-          curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LIBCXX_STD_VERSION}/libcxx-${LIBCXX_STD_VERSION}.src.tar.xz" -o /tmp/libcxx.tar.xz
-          mkdir -p /tmp/libcxx-src
-          tar -xf /tmp/libcxx.tar.xz -C /tmp/libcxx-src --strip-components=1
-          cp -r /tmp/libcxx-src/modules/. /tmp/std-module/
-          # Expand each placeholder to the include list over its .inc directory,
-          # mirroring modules/CMakeLists.txt (paths are relative to the .cppm, e.g.
-          # `std/algorithm.inc`). Order follows the sorted directory listing; the
-          # .inc files are self-contained re-export fragments and order-independent.
-          python3 - <<'PY'
-          import pathlib
-          base = pathlib.Path("/tmp/std-module")
-          for stem, subdir, ph in [
-              ("std", "std", "@LIBCXX_MODULE_STD_INCLUDE_SOURCES@"),
-              ("std.compat", "std.compat", "@LIBCXX_MODULE_STD_COMPAT_INCLUDE_SOURCES@"),
-          ]:
-              incs = sorted(p.name for p in (base / subdir).glob("*.inc"))
-              block = "".join(f'#include "{subdir}/{n}"\n' for n in incs)
-              text = (base / f"{stem}.cppm.in").read_text()
-              text = text.replace(ph, block)
-              (base / f"{stem}.cppm").write_text(text)
-              print(f"{stem}.cppm: expanded {len(incs)} includes from {subdir}/")
-
-          # NDK r27's libc++ headers are a trimmed libc++ ~18 that lacks the C++26
-          # saturation arithmetic (`add_sat`/`sub_sat`/`mul_sat`/`div_sat`/
-          # `saturate_cast`). Upstream 18.1.8's numeric.inc re-exports them, so drop
-          # those `export using` lines or the std module fails to build. Verified
-          # locally: NDK clang18 + NDK libc++ headers build the full std module
-          # (~27MB pcm) once these five names are removed.
-          numeric = base / "std" / "numeric.inc"
-          if numeric.exists():
-              kept = [
-                  ln for ln in numeric.read_text().splitlines(keepends=True)
-                  if not any(
-                      f"std::{name}" in ln
-                      for name in ("add_sat", "sub_sat", "mul_sat", "div_sat", "saturate_cast")
-                  )
-              ]
-              numeric.write_text("".join(kept))
-              print("numeric.inc: stripped C++26 saturation re-exports")
-          PY
-
-          # A modules.json whose source-paths point at the std.cppm we just staged.
-          cat > /tmp/std-module/libc++.modules.json <<JSON
-          {
-            "version": 1,
-            "revision": 1,
-            "modules": [
-              {
-                "logical-name": "std",
-                "source-path": "/tmp/std-module/std.cppm",
-                "is-std-library": true
-              },
-              {
-                "logical-name": "std.compat",
-                "source-path": "/tmp/std-module/std.compat.cppm",
-                "is-std-library": true
-              }
-            ]
-          }
-          JSON
-
-          # Install the json where CMake's detection will look for it.
-          #
-          # CRITICAL: CMake 4.0 runs the probe as a BARE call with NO --target:
-          #   ${CMAKE_CXX_COMPILER} -print-file-name=libc++.modules.json
-          # (confirmed from Compiler/Clang-CXX-CXXImportStd.cmake). So it resolves
-          # against clang's DEFAULT (host) lib dir, not the Android target dir.
-          # We therefore must install our json at the host location too.
-          #
-          # The standalone LLVM ships its own host libc++.modules.json (pointing at
-          # its v20 std.cppm). We OVERWRITE it with ours (pointing at libc++ 18.1.8
-          # std.cppm) because at *compile* time we force the NDK's libc++ 18 headers
-          # (__ndk1) via the toolchain; the std module source must match those
-          # headers, not LLVM 20's. The JSON only feeds CMake a source-path; the
-          # actual namespace/ABI comes from the headers used during compilation.
-          for CC in "${LLVM_DIR}/bin/clang" "${LLVM_DIR}/bin/clang++"; do
-            # Bare call (no --target) -- exactly what CMake's detection does.
-            RESOLVED="$("${CC}" -print-file-name=libc++.modules.json)"
-            if [ "${RESOLVED}" = "libc++.modules.json" ]; then
-              # Not found anywhere: fall back to the host lib dir via libc++.a.
-              ANCHOR="$("${CC}" -print-file-name=libc++.a)"
-              if [ "${ANCHOR}" = "libc++.a" ]; then
-                ANCHOR="$("${CC}" -print-resource-dir)/lib/libc++.a"
-              fi
-              RESOLVED="$(dirname "${ANCHOR}")/libc++.modules.json"
-            fi
-            mkdir -p "$(dirname "${RESOLVED}")"
-            cp /tmp/std-module/libc++.modules.json "${RESOLVED}"
-            echo "Installed modules.json -> ${RESOLVED}"
-            # Re-run the exact bare probe and confirm it now resolves to a real file.
-            CHECK="$("${CC}" -print-file-name=libc++.modules.json)"
-            echo "clang (bare) resolves libc++.modules.json -> ${CHECK}"
-            test -f "${CHECK}" || echo "WARN: ${CC} still does not resolve modules.json to an existing file"
-          done
-          echo "json=/tmp/std-module/libc++.modules.json" >> "$GITHUB_OUTPUT"
+          # Confirm LLVM 22 ships its own libc++.modules.json where CMake's bare
+          # (-print-file-name, no --target) probe will find it.
+          RESOLVED="$("${LLVM_DIR}/bin/clang++" -print-file-name=libc++.modules.json)"
+          echo "clang (bare) resolves libc++.modules.json -> ${RESOLVED}"
+          if [ ! -f "${RESOLVED}" ]; then
+            echo "ERROR: standalone LLVM did not ship a host libc++.modules.json" >&2
+            exit 1
+          fi
+          echo "Using bundled std module manifest: ${RESOLVED}"
+          echo "json=${RESOLVED}" >> "$GITHUB_OUTPUT"
 
       # Custom toolchain: standalone clang as compiler, NDK as sysroot only.
       - name: Write Android toolchain file
@@ -368,9 +265,24 @@ jobs:
           set(CMAKE_CXX_COMPILER_TARGET "\${_triple}")
           set(CMAKE_SYSROOT "\${_sysroot}")
 
-          # Use the NDK's libc++ headers so the std module and ABI match the
-          # libc++_shared runtime the Javet .so was linked against, and link
-          # libc++ dynamically. libc++_shared.so lives at
+          # libc++ HEADERS come from the standalone LLVM (v22), NOT the NDK (v18).
+          # Rationale: the exact same sources build cleanly on normal platforms with
+          # clang 22 + its own libc++ 22 headers, but crash the clang 22 frontend
+          # here (segfault in TransformTypeTraitExpr while instantiating e.g.
+          # std::optional<T>/std::expected<T> for a T imported from another module,
+          # during BMI emission) when fed the NDK's libc++ 18 headers. clang 22's
+          # module/BMI machinery is co-designed with libc++ 22's type_traits; the
+          # older libc++ 18 headers trip it. So we use LLVM 22's libc++ headers via
+          # -nostdinc++ + -isystem <llvm>/include/c++/v1.
+          #
+          # ABI: we still LINK against the NDK's libc++_shared.so (that is what the
+          # Javet .so was built with, __ndk1 namespace, _LIBCPP_ABI_VERSION 1). To
+          # keep symbol names and object layouts compatible we force the same ABI
+          # knobs on the libc++ 22 headers: _LIBCPP_ABI_NAMESPACE=__ndk1 (matches the
+          # runtime's mangled std:: names so we link against Javet's V8 C++ API which
+          # passes std::unique_ptr<BackingStore> etc.) and _LIBCPP_ABI_VERSION=1
+          # (the stable ABI: std:: layouts are guaranteed identical across libc++ 18
+          # and 22 under v1). libc++_shared.so lives at
           #   <sysroot>/usr/lib/<triplet>/libc++_shared.so
           #
           # CRITICAL: -stdlib=libc++ must reach CMake's compiler-detection
@@ -382,32 +294,20 @@ jobs:
           # never creates the __CMAKE::CXX26 target that every CXX_MODULE_STD
           # target needs. *_FLAGS_INIT are applied during that detection, so we
           # use them to force libc++ early. (add_compile_options is not.)
-          # -D__BIONIC_CTYPE_INLINE=inline: bionic's <ctype.h> defines isalnum/
-          # isalpha/... as `static __inline` (internal linkage) by default. libc++'s
-          # std module does `export using std::isalnum;`, and C++ forbids exporting
-          # internal-linkage entities, so the std module fails to build against the
-          # NDK sysroot. The macro is `#if !defined`-gated and bionic explicitly
-          # supports overriding it; `inline` gives these functions external linkage
-          # (C++ inline semantics, matching glibc), making them exportable. Applied
-          # to CXX flags so it reaches both CMake's std-module build and every TU.
-          # -D_LIBCPP_ENABLE_EXPERIMENTAL: stop_token/stop_source (used by the
-          # project) are experimental in libc++ 18. Both the class definitions
-          # (<__stop_token/*.h>, gated on _LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN)
-          # and the std-module re-exports (stop_token.inc, gated on
-          # _LIBCPP_ENABLE_EXPERIMENTAL) are off by default, so `import std`
-          # otherwise lacks std::stop_source. This macro enables both.
-          # -fno-modules-reduced-bmi: force full (not reduced) BMI emission. clang
-          # 20/21/22 all segfault in ASTReader while *lazily* deserializing
-          # specializations of util::sealed_map's std::array<std::pair<string_view,
-          # napi::reference<...>>> from a dependent module BMI (confirmed via
-          # bisect: crashes with only 7 elements, and for both string_table<> and
-          # class_template_references<> bases of backend_napi_v8::environment - so
-          # it is the reduced-BMI lazy-specialization path, not tuple size). Full
-          # BMI eagerly serializes those specializations and avoids the crash. The
-          # CMakeLists.txt check_cxx_compiler_flag gate for this flag misfires under
-          # cross-compilation (its try-compile can't link libc++_shared), so we set
-          # it here unconditionally - LLVM 21.1.4 always supports it.
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ -fno-modules-reduced-bmi -D__BIONIC_CTYPE_INLINE=inline -D_LIBCPP_ENABLE_EXPERIMENTAL")
+          # -nostdinc++ + -isystem <llvm>/include/c++/v1: use LLVM 22's libc++
+          #   headers (co-designed with clang 22's module machinery) instead of the
+          #   NDK's libc++ 18 headers, which crash clang 22 during BMI emission.
+          # -D_LIBCPP_ABI_NAMESPACE=__ndk1 / -D_LIBCPP_ABI_VERSION=1: keep the std::
+          #   mangled names and object layouts identical to the NDK libc++_shared.so
+          #   we link against (and that the Javet .so was built with).
+          # -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE / -D_LIBCPP_PSTL_CPU_BACKEND_THREAD /
+          #   -D_LIBCPP_HARDENING_MODE=2: mirror the NDK __config_site so the header
+          #   configuration matches the runtime.
+          # -fno-modules-reduced-bmi: force full BMI (harmless; avoids the reduced-BMI
+          #   lazy-specialization ASTReader crash). LLVM 22 supports it.
+          set(_libcxx "-nostdinc++ -isystem \${_llvm}/include/c++/v1")
+          set(_libcxx_abi "-D_LIBCPP_ABI_NAMESPACE=__ndk1 -D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE")
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -fno-modules-reduced-bmi")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
