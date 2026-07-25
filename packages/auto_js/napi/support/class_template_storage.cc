@@ -7,12 +7,18 @@ using namespace std::string_literals;
 
 namespace js::napi {
 
-// Given a pack of strings it returns a static reference to a `util::sealed_map` of napi object
-// references.
+// nb: The lookup table stores a *trivial* value type (std::monostate) rather than
+// napi::reference<>. Storing reference<> directly in the sealed_map used to make clang
+// (20/21/22) segfault in the frontend (getCanonicalTemplateArgument /
+// LoadExternalSpecializations) while serializing `std::array<std::pair<string_view,
+// reference<>>, N>` into this module's BMI. Decoupling the compile-time lookup (keys ->
+// sorted slot) from the runtime reference storage (a parallel std::array indexed by that
+// slot) keeps reference<> out of any sealed_map/pair specialization, dodging the ICE while
+// preserving identical behavior.
 template <const auto& Strings>
-constexpr auto class_template_references_of = []() -> auto {
+constexpr auto class_template_index_of = []() -> auto {
 	const auto [... strings ] = Strings;
-	return util::sealed_map{std::type_identity<napi::reference<class_tag>>{}, strings...};
+	return util::sealed_map{std::type_identity<std::monostate>{}, strings...};
 }();
 
 // Environment storage for class template references
@@ -22,7 +28,7 @@ class class_template_references {
 		template <class Type>
 		auto class_template(this auto& self, std::type_identity<Type> /*type*/, const auto& class_template) -> local_of<class_tag_of<Type>> {
 			constexpr auto name_sv = util::make_consteval_string_view(class_template.constructor.name);
-			constexpr auto index = class_template_references_of<Strings>.lookup(name_sv);
+			constexpr auto index = class_template_index_of<Strings>.lookup(name_sv);
 			if constexpr (!index) {
 				// nb: This fails while linking against STL for some reason. So the `constexpr` if works
 				// around the issue.
@@ -32,7 +38,7 @@ class class_template_references {
 				//    38 |                         static_assert(index, "Class template '"s + name_sv + "' is missing in storage"s);
 				static_assert(index, "Class template '"s + name_sv + "' is missing in storage"s);
 			}
-			auto& reference = self.class_template_references_.at(index).second;
+			auto& reference = self.class_template_references_.at(*index);
 			using value_type = js::napi::local_of<class_tag_of<Type>>;
 			if (reference) {
 				return value_type::from(reference.get(self));
@@ -44,7 +50,8 @@ class class_template_references {
 		}
 
 	private:
-		util::copy_of<class_template_references_of<Strings>> class_template_references_;
+		static constexpr std::size_t table_size_ = std::tuple_size_v<std::remove_cvref_t<decltype(Strings)>>;
+		std::array<napi::reference<class_tag>, table_size_> class_template_references_;
 };
 
 } // namespace js::napi
