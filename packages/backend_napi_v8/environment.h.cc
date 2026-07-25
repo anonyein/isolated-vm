@@ -8,8 +8,14 @@ using namespace std::string_view_literals;
 
 namespace backend_napi_v8 {
 
-// String literals used in this module
-constexpr auto string_literals = std::tuple{
+// String literals used in this module.
+// nb: These are homogeneous string_views, so std::array (not std::tuple) is the
+// natural container -- and it sidesteps a clang frontend segfault (seen on clang
+// 20/21/22) that crashes while lazily deserializing the large
+// std::tuple<string_view x25> conversion-ctor specialization from a module BMI.
+// The consumers below (napi::string_table / class_template_references) only use
+// `const auto [...strings] = Strings;`, which works identically on std::array.
+constexpr auto string_literals = std::array{
 	"Agent"sv,
 	"attributes"sv,
 	"clock"sv,
@@ -38,7 +44,7 @@ constexpr auto string_literals = std::tuple{
 };
 
 // Storage for class templates
-constexpr auto class_names = std::tuple{
+constexpr auto class_names = std::array{
 	"Agent"sv,
 	"Module"sv,
 	"NativeModule"sv,
