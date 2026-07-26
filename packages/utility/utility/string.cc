@@ -27,7 +27,13 @@ consteval auto consteval_strcat(constant_wrapper<Strings>... /*strings*/) {
 		constexpr auto size = (... + (std::extent_v<typename constant_wrapper<Strings>::value_type> - 1));
 		std::array<char_type, size + 1> chars{};
 		std::size_t offset = 0;
-		(..., (std::ranges::copy(Strings.value, chars.data() + offset), offset += std::extent_v<typename constant_wrapper<Strings>::value_type> - 1));
+		(..., (([ & ]() constexpr {
+			constexpr auto extent = std::extent_v<typename constant_wrapper<Strings>::value_type> - 1;
+			for (std::size_t index = 0; index < extent; ++index) {
+				chars[ offset + index ] = Strings.value[ index ];
+			}
+			offset += extent;
+		})()));
 		return chars;
 	}();
 	auto [... indices ] = sequence<chars.size()>;
