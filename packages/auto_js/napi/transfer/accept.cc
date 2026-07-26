@@ -114,7 +114,7 @@ auto accept_basic_napi_value::operator()(array_buffer_tag /*tag*/, visit_holder 
 	// nb: `std::memcpy` *technically* results in undefined behavior on block size 0
 	// (and also) it maybe causes an infinite loop with musl
 	// https://stackoverflow.com/questions/5243012/is-it-guaranteed-to-be-safe-to-perform-memcpy0-0-0
-	std::ranges::copy(view, static_cast<std::byte*>(bytes));
+	std::copy(view.begin(), view.end(), static_cast<std::byte*>(bytes));
 	auto value = local_of<array_buffer_tag>::from(result);
 	return js::referenceable_value{value};
 }

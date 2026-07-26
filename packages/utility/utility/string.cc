@@ -305,7 +305,10 @@ constexpr auto transcode_string(std::basic_string_view<From> from) -> std::basic
 		auto first = result;
 		while (!reader.eof()) {
 			auto chunk = codepoint_char_range<To>{reader.read()};
-			std::ranges::copy(chunk, result);
+			// nb: std::copy (iterator form) not std::ranges::copy: libc++ 23's
+			// ranges::copy rejects this call ("no matching function for 'const
+			// __copy'") for these bespoke char ranges into a raw pointer.
+			std::copy(chunk.begin(), chunk.end(), result);
 			result += chunk.size();
 		}
 		return result - first;
