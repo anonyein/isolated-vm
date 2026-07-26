@@ -374,7 +374,16 @@ jobs:
           # entities, so the std module fails. bionic gates this on
           # __BIONIC_CTYPE_INLINE and supports overriding it; `inline` gives external
           # linkage (C++ inline semantics), making them exportable.
-          set(_libcxx_abi "-D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__BIONIC_CTYPE_INLINE=inline")
+          # NOTE: we deliberately do NOT set -D_LIBCPP_HARDENING_MODE=EXTENSIVE.
+          # The upstream (non-Android) build uses the default hardening mode, and
+          # EXTENSIVE injects _LIBCPP_ASSERT calls into every container operation,
+          # which changes the template bodies of std::optional/expected/array. That
+          # difference appears to be what pushes clang 22's ASTReader over the edge
+          # when lazily loading those specializations from an imported module's BMI
+          # (the module.h.cc / utility.cc / reference.h.cc crashes). Hardening mode
+          # only affects inlined assertions in the *header* code we compile; it does
+          # not change ABI or the NDK libc++_shared.so we link, so dropping it is safe.
+          set(_libcxx_abi "-D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D__BIONIC_CTYPE_INLINE=inline")
           # -Wno-unused-command-line-argument: with -nostdinc++ we take over the
           # libc++ header search manually, so -stdlib=libc++ is unused for pure
           # module (.cppm) compiles and -Werror would otherwise reject it. We keep
