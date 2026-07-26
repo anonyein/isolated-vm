@@ -160,7 +160,7 @@ struct accept_with_casted_string {
 	private:
 		template <class Accept, class Subject>
 		constexpr auto cast(this const Accept& self, std::type_identity<Subject> tag, auto&& subject) -> value_type {
-			return self.cast(tag, std::basic_string_view{std::basic_string<Subject>{std::forward<decltype(subject)>(subject)}});
+			return self.cast(tag, std::basic_string_view<Subject>{std::basic_string<Subject>{std::forward<decltype(subject)>(subject)}});
 		}
 
 		template <class Accept, class Subject>

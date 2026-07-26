@@ -83,7 +83,7 @@ auto value_for_object::get(v8::Local<v8::Primitive> key) const -> mapped_type {
 
 auto value_for_object::into_range() -> range_type {
 	// NOLINTNEXTLINE(cppcoreguidelines-slicing)
-	return range_type{std::views::all(keys()), iterator_transform{*this, context()}};
+	return range_type{keys(), iterator_transform{*this, context()}};
 }
 
 auto value_for_object::size() const -> std::size_t {
