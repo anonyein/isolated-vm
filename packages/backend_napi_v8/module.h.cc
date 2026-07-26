@@ -42,7 +42,7 @@ export class module_handle {
 		using transfer_type = js::tagged_external<module_handle>;
 		module_handle(agent_handle agent, js::iv8::shared_remote<v8::Module> module);
 
-		auto agent() -> auto& { return agent_; }
+		auto agent() -> agent_handle& { return agent_; }
 
 		auto evaluate(environment& env, realm_handle* realm) -> forward_promise_type;
 		auto link(environment& env, realm_handle* realm, module_handle_link_record link_record) -> forward_promise_type;

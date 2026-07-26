@@ -14,8 +14,8 @@ export class realm_handle {
 
 		realm_handle(agent_handle agent, js::iv8::shared_remote<v8::Context> realm);
 
-		auto agent() -> auto& { return agent_; }
-		auto realm() -> auto& { return realm_; }
+		auto agent() -> agent_handle& { return agent_; }
+		auto realm() -> js::iv8::shared_remote<v8::Context>& { return realm_; }
 
 		auto acquire_global_object(environment& env) -> forward_promise_type;
 		auto instantiate_runtime(environment& env) -> forward_promise_type;
