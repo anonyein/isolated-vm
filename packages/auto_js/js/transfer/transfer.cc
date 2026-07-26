@@ -70,6 +70,16 @@ struct accept_with_throw {
 		using accept = accept_throw<Accept>;
 };
 
+// nb: The type-error message is produced by a namespace-scope variable template
+// so its consteval_strcat evaluation happens entirely OUTSIDE any function body.
+// If consteval_strcat were called inside accept_throw::operator() (even hoisted
+// into a constexpr local), clang's new constant interpreter would escalate that
+// whole operator() into an immediate function (P2564), which then poisons the
+// entire visit/accept call chain (every acceptor that references its address).
+template <class Accept, class Tag>
+constexpr auto type_error_message = util::consteval_strcat(
+	util::cw<u"expected ">, expected_tag_message<Accept>(), util::cw<u", but got ">, message_for_tag(Tag{}));
+
 // Adds fallback acceptor which throws on unknown values
 template <class Accept>
 struct accept_with_throw::accept_throw : Accept {
@@ -80,13 +90,7 @@ struct accept_with_throw::accept_throw : Accept {
 		using Accept::operator();
 		constexpr auto operator()(auto tag, auto& visit, auto&& subject) const -> accept_target_type
 			requires(!std::invocable<const Accept&, decltype(tag), decltype(visit), decltype(subject)>) {
-			// nb: Hoist the consteval_strcat result into a constexpr local so the
-			// consteval evaluation happens in a controlled constant context. Calling
-			// consteval_strcat directly in the throw expression makes clang's new
-			// constant interpreter escalate this whole operator() into an immediate
-			// function (P2564), which then poisons the entire visit/accept call chain.
-			constexpr auto message = util::consteval_strcat(util::cw<u"expected ">, expected_tag_message<Accept>(), util::cw<u", but got ">, message_for_tag(decltype(tag){}));
-			throw js::type_error{message};
+			throw js::type_error{type_error_message<Accept, decltype(tag)>};
 		}
 };
 
