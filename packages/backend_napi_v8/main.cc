@@ -18,7 +18,9 @@ import :native_module;
 import :realm;
 import :script;
 import auto_js;
+import isolated_vm;
 import napi_js;
+import nodejs;
 import std;
 import util;
 import v8_js;
@@ -28,6 +30,8 @@ import v8_js;
 // crash on Android cross-compile). Included in the module purview here.
 #include "module_handle.h"
 #include "realm_handle.h"
+#include "script_handle.h"
+#include "native_module_handle.h"
 
 namespace backend_napi_v8 {
 

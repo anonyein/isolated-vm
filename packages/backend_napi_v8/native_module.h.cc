@@ -1,3 +1,5 @@
+module;
+#include "auto_js/gcc_abi_tag.h"
 export module backend_napi_v8:native_module;
 import :realm;
 import auto_js;
@@ -9,35 +11,16 @@ import util;
 
 namespace backend_napi_v8 {
 
-struct create_native_module_options {
-		std::u16string origin;
-		std::optional<std::string> suffix;
-
-		constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"origin">, &create_native_module_options::origin},
-			js::struct_member{util::cw<"suffix">, &create_native_module_options::suffix},
-		};
-};
-
-export class native_module_handle {
-	public:
-		explicit native_module_handle(
-			js::napi::uv_dlib lib,
-			isolated_vm::detail::initialize_addon* initialize,
-			create_native_module_options options,
-			std::vector<std::u16string> names
-		);
-
-		auto instantiate(environment& env, realm_handle* realm) -> forward_promise_type;
-		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<native_module_handle>>;
-		static auto create(environment& env, std::string filename, create_native_module_options options) -> forward_promise_type;
-		static auto unload_hook() -> void;
-
-	private:
-		js::napi::uv_dlib lib_;
-		isolated_vm::detail::initialize_addon* initialize_;
-		create_native_module_options options_;
-		std::vector<std::u16string> names_;
-};
+// create_native_module_options and native_module_handle's full definitions live
+// in "native_module_handle.h" (included in the module purview of the
+// implementation units native_module.cc / main.cc / environment.cc). Defining
+// them HERE, in this interface partition, makes clang serialize the
+// struct_template specialization and native_module_handle's visible-name lookup
+// table into this partition's BMI, which crashes clang 23 (struct_template
+// instantiation / ASTWriter::GenerateNameLookupTable, llvm #161215 family) when
+// cross-compiling for Android. No other interface partition names these, so they
+// need not be exported entities of this partition.
+struct create_native_module_options;
+class native_module_handle;
 
 } // namespace backend_napi_v8

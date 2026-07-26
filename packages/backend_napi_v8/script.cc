@@ -10,6 +10,8 @@ import v8_js;
 
 // Full definitions of the completion_record visitor types (was :utility partition).
 #include "completion_record.h"
+#include "realm_handle.h"
+#include "script_handle.h"
 
 namespace backend_napi_v8 {
 

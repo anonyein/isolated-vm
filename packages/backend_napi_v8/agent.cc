@@ -17,6 +17,7 @@ import v8_js;
 // the clang 23 ASTWriter::GenerateNameLookupTable crash on Android).
 #include "module_handle.h"
 #include "realm_handle.h"
+#include "script_handle.h"
 
 namespace backend_napi_v8 {
 

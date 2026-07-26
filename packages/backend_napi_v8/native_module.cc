@@ -12,9 +12,15 @@ import :native_module;
 import auto_js;
 import isolated_vm;
 import napi_js;
+import nodejs;
 import std;
 import util;
 import v8_js;
+
+// native_module_handle: was the exported class of :native_module, now a plain
+// header (avoids the clang 23 ASTWriter::GenerateNameLookupTable crash on
+// Android cross-compile).
+#include "native_module_handle.h"
 
 // module_handle: was the exported class of :module_, now a plain header (avoids
 // the clang 23 ASTWriter::GenerateNameLookupTable crash on Android cross-compile).

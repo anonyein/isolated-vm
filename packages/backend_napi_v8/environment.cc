@@ -1,6 +1,19 @@
 module backend_napi_v8;
+import :agent_handle;
 import :environment;
 import :native_module;
+import :realm;
+import auto_js;
+import isolated_vm;
+import napi_js;
+import nodejs;
+import util;
+import v8_js;
+
+// native_module_handle: was the :native_module partition, now a plain header
+// (moved out to dodge the clang 23 struct_template/ASTWriter crash on Android).
+#include "native_module_handle.h"
+
 using namespace js;
 
 namespace backend_napi_v8 {
