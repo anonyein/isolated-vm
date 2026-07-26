@@ -54,7 +54,7 @@ env:
   # tail-padding probe (__allow_reusing_expected_tail_padding / __x /
   # __fits_in_tail_padding, tuple:555) which clang 22's libc++ does not have.
   # So 22 is now the better target for this codebase.
-  LLVM_VERSION: "22.1.0"
+  LLVM_VERSION: "23.0.0"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
   ANDROID_NDK_VERSION: r27c
