@@ -219,8 +219,17 @@ struct accept_property_value<Meta, Key, Type, void> {
 				second{transfer} {}
 
 		constexpr auto operator()(dictionary_tag /*tag*/, auto& visit, const auto& subject) const {
+			// nb: Hoist the consteval call into a constexpr local. Calling
+			// util::make_consteval_string_view(Key) directly inside the lambda makes
+			// clang's new constant interpreter propagate P2564 immediate-escalation
+			// through the whole operator() call chain, reporting it as "call to
+			// immediate function is not a constant expression" at runtime use sites
+			// (visit.cc). Key is an NTTP so the view is fully compile-time; binding it
+			// to a constexpr local evaluates it once in a constant context and stops
+			// the escalation from spreading.
+			constexpr auto key_view = util::make_consteval_string_view(Key);
 			auto it = std::ranges::find_if(subject, [ & ](const auto& entry) -> bool {
-				return visit.first(entry.first, first) == util::make_consteval_string_view(Key);
+				return visit.first(entry.first, first) == key_view;
 			});
 			if (it == subject.end()) {
 				return second(undefined_in_tag{}, visit, std::monostate{});
