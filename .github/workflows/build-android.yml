@@ -101,14 +101,23 @@ jobs:
 
       # Standalone LLVM: the compiler. Provides clang++ with C++26 support and,
       # crucially, libc++ std.cppm + libc++.modules.json for `import std`.
-      - name: Install standalone LLVM ${{ env.LLVM_VERSION }}
+      - name: Install LLVM ${{ env.LLVM_VERSION }} (distro packages from apt.llvm.org)
         run: |
           set -eux
-          LLVM_DIR=/opt/llvm
-          sudo mkdir -p "$LLVM_DIR"
-          URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz"
-          curl -fsSL "$URL" -o llvm.tar.xz
-          sudo tar -xf llvm.tar.xz -C "$LLVM_DIR" --strip-components=1
+          # Use apt.llvm.org's clang-22 packages rather than the vanilla
+          # LLVM-x.y.z-Linux-X64.tar.xz release. The vanilla release binaries crash
+          # (clang frontend segfault / "SmallVector unable to grow" in
+          # ASTReader::LoadExternalSpecializations) while emitting the BMI for the
+          # backend_napi_v8 interface partitions that instantiate std::tuple/optional/
+          # array of project reflection types (llvm #165348, still open upstream).
+          # The distro packages carry backported serialization fixes and are exactly
+          # what the upstream (non-Android) build uses successfully on Debian/Alpine.
+          LLVM_MAJOR="${LLVM_VERSION%%.*}"
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh "$LLVM_MAJOR" all
+          LLVM_DIR="/usr/lib/llvm-${LLVM_MAJOR}"
+          test -x "$LLVM_DIR/bin/clang++" || { echo "ERROR: $LLVM_DIR/bin/clang++ missing after apt install" >&2; ls -la /usr/lib | grep llvm || true; exit 1; }
           echo "LLVM_DIR=$LLVM_DIR" >> "$GITHUB_ENV"
           "$LLVM_DIR/bin/clang++" --version
 
