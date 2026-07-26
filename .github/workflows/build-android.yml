@@ -44,12 +44,17 @@ env:
   # BMI. Reduced BMI keeps those specializations out of the BMI so importers
   # re-instantiate them locally instead.
   #
-  # Bumped to 23 (apt.llvm.org trunk channel): clang 22.1.x still segfaults in
-  # ASTWriter::GenerateNameLookupTable / ASTDeclContextNameLookupTrait::
-  # getLookupVisibility while emitting the module_/reference interface BMIs
-  # (llvm #161215, still open on the 22.x release branch). The trunk snapshot
-  # carries the latest serialization fixes; try it to get past the crash.
-  LLVM_VERSION: "23.0.0"
+  # Back to 22 (apt.llvm.org release channel): we originally bumped to the 23
+  # trunk snapshot to dodge clang 22's ASTWriter::GenerateNameLookupTable /
+  # getLookupVisibility crash on the module_/reference interface BMIs (llvm
+  # #161215), but that crash is now eliminated at the source level (all six
+  # backend export-handle partitions were moved to plain headers, and
+  # struct_template stores a util::flat_tuple instead of libc++ std::tuple).
+  # clang 23 (trunk) instead segfaults in libc++'s NEW std::expected
+  # tail-padding probe (__allow_reusing_expected_tail_padding / __x /
+  # __fits_in_tail_padding, tuple:555) which clang 22's libc++ does not have.
+  # So 22 is now the better target for this codebase.
+  LLVM_VERSION: "22.1.0"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
   ANDROID_NDK_VERSION: r27c
