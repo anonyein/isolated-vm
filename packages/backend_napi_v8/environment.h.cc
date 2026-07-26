@@ -9,13 +9,15 @@ using namespace std::string_view_literals;
 namespace backend_napi_v8 {
 
 // String literals used in this module.
-// nb: These are homogeneous string_views, so std::array (not std::tuple) is the
-// natural container -- and it sidesteps a clang frontend segfault (seen on clang
-// 20/21/22) that crashes while lazily deserializing the large
-// std::tuple<string_view x25> conversion-ctor specialization from a module BMI.
-// The consumers below (napi::string_table / class_template_references) only use
-// `const auto [...strings] = Strings;`, which works identically on std::array.
-constexpr auto string_literals = std::array{
+// nb: A C-style array (NOT std::array/std::tuple). The 25-element
+// std::array<string_view,25> is a class-template specialization that clang's
+// ASTReader aborts on (FoldingSetVector<ClassTemplateSpecializationDecl> ->
+// realloc) while deserializing it from the std module BMI. A builtin array is
+// not a class-template specialization, so it never touches that code path. The
+// consumers (napi::string_table / class_template_references) and the reference
+// NTTP `template <const auto& Strings>` bind a C array identically, and
+// `const auto [...strings] = Strings;` works the same on a C array.
+constexpr std::string_view string_literals[] = {
 	"Agent"sv,
 	"attributes"sv,
 	"clock"sv,
@@ -43,8 +45,8 @@ constexpr auto string_literals = std::array{
 	"type"sv,
 };
 
-// Storage for class templates
-constexpr auto class_names = std::array{
+// Storage for class templates (C-style array; see string_literals above).
+constexpr std::string_view class_names[] = {
 	"Agent"sv,
 	"Module"sv,
 	"NativeModule"sv,

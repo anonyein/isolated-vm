@@ -43,7 +43,7 @@ class string_table {
 		}
 
 	private:
-		static constexpr std::size_t table_size_ = std::tuple_size_v<std::remove_cvref_t<decltype(Strings)>>;
+		static constexpr std::size_t table_size_ = std::extent_v<std::remove_cvref_t<decltype(Strings)>>;
 		std::array<napi::reference<string_tag>, table_size_> string_literal_storage_;
 };
 
