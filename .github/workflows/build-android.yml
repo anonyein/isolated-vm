@@ -206,12 +206,15 @@ jobs:
             # Path clang 20 wants: <resource>/lib/<triple-normalized>/libclang_rt.builtins.a
             RES_DIR="$("${LLVM_DIR}/bin/clang" --target="${TRIPLE}" -print-resource-dir)"
             DEST="${RES_DIR}/lib/${RTDIR_NAME}"
-            mkdir -p "${DEST}"
-            cp "${NDK_RT}/libclang_rt.builtins-${ARCH}-android.a" "${DEST}/libclang_rt.builtins.a"
+            # /usr/lib/llvm-22 (apt distro package) is root-owned, so these
+            # writes need sudo (the old /opt/llvm tarball dir happened to be
+            # writable by the runner user).
+            sudo mkdir -p "${DEST}"
+            sudo cp "${NDK_RT}/libclang_rt.builtins-${ARCH}-android.a" "${DEST}/libclang_rt.builtins.a"
 
             # libunwind.a: clang looks for `-l:libunwind.a` on the library path.
             # Stage it next to the builtins and also expose the arch dir.
-            cp "${NDK_RT}/${ARCH}/libunwind.a" "${DEST}/libunwind.a"
+            sudo cp "${NDK_RT}/${ARCH}/libunwind.a" "${DEST}/libunwind.a"
             echo "Staged runtime for ${TRIPLE} -> ${DEST}"
             ls -l "${DEST}"
           done
