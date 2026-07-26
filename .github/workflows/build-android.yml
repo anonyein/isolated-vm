@@ -434,14 +434,7 @@ jobs:
           # dir above). Force compiler-rt so linking finds -l:libclang_rt.builtins
           # / libunwind instead of the missing -lgcc.
           set(_rtlib "--rtlib=compiler-rt --unwindlib=libunwind")
-          # -fexperimental-new-constant-interpreter: clang's bytecode-based
-          # constant evaluator. The default evaluator recurses on the C++ stack
-          # while consteval-constructing js::struct_template{...} static members,
-          # which segfaults clang here when cross-compiling for Android. The
-          # bytecode interpreter does not recurse the same way, so it may evaluate
-          # these initializers without exhausting the frontend stack.
-          set(_constexpr "-fexperimental-new-constant-interpreter")
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} \${_rtlib} \${_constexpr} -Wno-unused-command-line-argument")
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} \${_rtlib} -Wno-unused-command-line-argument")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
