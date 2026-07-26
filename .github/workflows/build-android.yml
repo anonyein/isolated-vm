@@ -310,8 +310,8 @@ jobs:
           # Fix: locate the actual std.cppm, then emit a corrected json with ABSOLUTE
           # source-paths and hand it to CMake via CMAKE_CXX_STDLIB_MODULES_JSON (the
           # same knob the upstream macOS build uses via ECO_STD).
-          STD_CPPM="$(find /usr/lib/llvm-22 -name 'std.cppm' 2>/dev/null | head -n1)"
-          test -n "$STD_CPPM" || { echo "ERROR: std.cppm not found under /usr/lib/llvm-22" >&2; exit 1; }
+          STD_CPPM="$(find "$LLVM_DIR" -name 'std.cppm' 2>/dev/null | head -n1)"
+          test -n "$STD_CPPM" || { echo "ERROR: std.cppm not found under $LLVM_DIR" >&2; exit 1; }
           STD_DIR="$(dirname "$STD_CPPM")"
           echo "std module sources dir: ${STD_DIR}"
           ls -l "${STD_DIR}"
