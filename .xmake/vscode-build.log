@@ -1,4 +1,0 @@
-error: .\xmake.lua:31: attempt to concatenate a nil value
-stack traceback:
-    [.\xmake.lua:31]: in main chunk
-

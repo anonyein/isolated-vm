@@ -9,3 +9,5 @@
 /.pnpm-store
 /build
 /compile_commands.json
+
+/.xmake/
