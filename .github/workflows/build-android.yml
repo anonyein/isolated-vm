@@ -499,7 +499,17 @@ jobs:
             -DIVM_INSTALL=artifacts
 
       - name: Build
-        run: ninja -C build backend_napi_v8
+        # clang 23 turned the module.h.cc / reference.h.cc ASTReader crash into a
+        # protected stack-exhaustion abort (StackExhaustionHandler): serializing
+        # these largest-import-closure partitions' BMI recurses deeply through the
+        # redeclaration chain (CompleteRedeclChain / adjustDeducedFunctionResultType)
+        # and runs out of the default 8 MiB thread stack. Raise the stack limit so
+        # the (finite, valid) recursion can complete. ninja inherits this ulimit and
+        # passes it on to the clang child processes.
+        run: |
+          set -eux
+          ulimit -s unlimited || ulimit -s 131072 || true
+          ninja -C build backend_napi_v8
 
       - name: Inspect artifact
         if: success()
