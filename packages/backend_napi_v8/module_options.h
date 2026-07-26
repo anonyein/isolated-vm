@@ -18,6 +18,12 @@
 
 namespace backend_napi_v8 {
 
+// module_handle's full definition lives in "module_handle.h" (included after
+// this header in the implementation units). module_handle_link_record only
+// stores js::tagged_external<module_handle>, which does not need a complete
+// type, so a forward declaration suffices here.
+class module_handle;
+
 struct compile_module_options : js::optional_constructible {
 		using js::optional_constructible::optional_constructible;
 		std::optional<js::iv8::source_origin> origin;
