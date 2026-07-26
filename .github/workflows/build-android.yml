@@ -153,29 +153,28 @@ jobs:
           test -n "$ORIG_SITE" || { echo "ERROR: no bundled libc++ __config_site" >&2; find "$LLVM_DIR/include" -maxdepth 4 -name __config_site 2>/dev/null; exit 1; }
           echo "libc++ headers: $LIBCXX_INC ; original config-site: $ORIG_SITE"
 
-          # Build a PATCHED __config_site that forces the NDK ABI knobs. The Javet
-          # .so was linked against the NDK's libc++_shared (inline namespace
-          # std::__ndk1::, _LIBCPP_ABI_VERSION 1). We compile with LLVM 22's libc++
-          # headers but MUST land std:: symbols in __ndk1 so we can link against
-          # Javet's V8 C++ API (which passes std types across the boundary). The
-          # bundled site is generated for the host default (__1); relying on a
-          # command-line -D is fragile (if the site file hard-#defines the
-          # namespace, -D loses). So we copy the site and deterministically rewrite
-          # the ABI namespace to __ndk1, injecting it if absent. Everything else
-          # (hardening, etc.) is inherited from the bundled site unchanged.
+          # Use the bundled __config_site UNCHANGED (standard __1 ABI namespace).
+          #
+          # DIAGNOSTIC EXPERIMENT: previously we rewrote this to force
+          # _LIBCPP_ABI_NAMESPACE=__ndk1 so std:: symbols would match the Javet
+          # .so (linked against the NDK's libc++_shared / std::__ndk1::). But that
+          # non-standard inline namespace, combined with clang's C++20-module BMI
+          # name-lookup-table serialization, deterministically crashes
+          # (ASTWriter::GenerateNameLookupTable / infinite redecl-chain recursion,
+          # llvm #161215 family) on the two largest importer partitions
+          # (module_/reference). The upstream Linux/Win/mac builds never hit this
+          # because they use the standard __1 ABI. So we drop the __ndk1 rewrite to
+          # confirm the crash is caused by the non-standard ABI namespace; the
+          # std<->Javet ABI bridge (if the theory holds) becomes a link-time
+          # concern to solve separately.
           LIBCXX_SITE=/tmp/libcxx-site/c++/v1
           mkdir -p "$LIBCXX_SITE"
-          grep -v '_LIBCPP_ABI_NAMESPACE' "$ORIG_SITE" > "$LIBCXX_SITE/__config_site"
-          # Insert our namespace define right after the header guard's first #define.
-          awk 'NR==1{print} NR==1{print "#define _LIBCPP_ABI_NAMESPACE __ndk1"} NR>1{print}' \
-            "$LIBCXX_SITE/__config_site" > "$LIBCXX_SITE/__config_site.tmp"
-          mv "$LIBCXX_SITE/__config_site.tmp" "$LIBCXX_SITE/__config_site"
-          echo "--- patched __config_site ---"; cat "$LIBCXX_SITE/__config_site"
+          cp "$ORIG_SITE" "$LIBCXX_SITE/__config_site"
+          echo "--- __config_site (standard, unmodified) ---"; cat "$LIBCXX_SITE/__config_site"
 
-          # Probe: -isystem the patched site FIRST, then the generic tree. Confirm
-          # _LIBCPP_VERSION is defined (what CMake checks at enable_language(CXX))
-          # and the ABI namespace really is __ndk1.
-          printf '#include <version>\n#ifndef _LIBCPP_VERSION\n#error not libc++\n#endif\n#include <string>\nauto s = std::__ndk1::string{};\nint main(){return 0;}\n' > /tmp/libcxx_probe.cc
+          # Probe: -isystem the site FIRST, then the generic tree. Confirm
+          # _LIBCPP_VERSION is defined (what CMake checks at enable_language(CXX)).
+          printf '#include <version>\n#ifndef _LIBCPP_VERSION\n#error not libc++\n#endif\n#include <string>\nauto s = std::string{};\nint main(){return 0;}\n' > /tmp/libcxx_probe.cc
           "$LLVM_DIR/bin/clang++" -nostdinc++ -isystem "$LIBCXX_SITE" -isystem "$LIBCXX_INC" \
             --target=x86_64-unknown-linux-gnu -std=c++26 -fsyntax-only /tmp/libcxx_probe.cc
           echo "LIBCXX_INC=$LIBCXX_INC" >> "$GITHUB_ENV"
