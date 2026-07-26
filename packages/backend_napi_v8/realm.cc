@@ -2,8 +2,8 @@ module backend_napi_v8;
 import :environment;
 import :lock;
 import :module_;
-import :reference;
 import auto_js;
+import napi_js;
 import std;
 import util;
 import v8_js;
@@ -12,6 +12,9 @@ import v8_js;
 #include "module_options.h"
 // Full definitions of the completion_record visitor types (was :utility partition).
 #include "completion_record.h"
+// reference_handle was the :reference interface partition; converted to a plain
+// header to avoid the clang 23 ASTWriter::GenerateNameLookupTable crash.
+#include "reference_handle.h"
 
 namespace backend_napi_v8 {
 

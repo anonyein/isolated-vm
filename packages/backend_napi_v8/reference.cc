@@ -2,15 +2,19 @@ module backend_napi_v8;
 import :agent_handle;
 import :environment;
 import :lock;
-import :reference;
 import auto_js;
+import napi_js;
 import std;
 import util;
+import v8_js;
 
 // Full definition of completion_record (was the :utility interface partition;
 // converted to a header to keep its struct_template specializations out of any
 // BMI -- clang 22 ASTWriter crash workaround).
 #include "completion_record.h"
+// reference_handle was the :reference interface partition; converted to a plain
+// header to avoid the clang 23 ASTWriter::GenerateNameLookupTable crash.
+#include "reference_handle.h"
 
 namespace backend_napi_v8 {
 

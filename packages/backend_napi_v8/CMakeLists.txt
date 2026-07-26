@@ -40,7 +40,6 @@ target_sources(${backend_napi_v8}
 		module.h.cc
 		native_module.h.cc
 		realm.h.cc
-		reference.h.cc
 		runtime/runtime.h.cc
 		script.h.cc
 )

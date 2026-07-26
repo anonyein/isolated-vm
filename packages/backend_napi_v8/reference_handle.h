@@ -1,13 +1,20 @@
-export module backend_napi_v8:reference;
-import :agent_handle;
-import :environment;
-import auto_js;
-import napi_js;
-import v8_js;
+#pragma once
+// reference_handle was the `backend_napi_v8:reference` interface partition. It
+// is NOT re-exported by the primary module (`_module.cc` does not list it) and
+// is only consumed by two implementation units (realm.cc / reference.cc). We
+// converted it from a module interface partition to a plain header so it never
+// emits a BMI: clang 23 crashes in ASTWriter::GenerateNameLookupTable /
+// getLookupVisibility (infinite redecl-chain recursion, llvm #161215) while
+// serializing this partition's visible-name lookup table when cross-compiling
+// for an Android target. Including it in the module purview of the .cc units
+// (after their imports) gives it the same visibility without a BMI.
+//
+// Requires the including TU to have already imported: auto_js, napi_js, v8_js,
+// :agent_handle, :environment.
 
 namespace backend_napi_v8 {
 
-export class reference_handle {
+class reference_handle {
 	public:
 		using transfer_type = js::tagged_external<reference_handle>;
 
