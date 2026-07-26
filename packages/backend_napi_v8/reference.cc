@@ -3,8 +3,14 @@ import :agent_handle;
 import :environment;
 import :lock;
 import :reference;
-import :utility;
+import auto_js;
 import std;
+import util;
+
+// Full definition of completion_record (was the :utility interface partition;
+// converted to a header to keep its struct_template specializations out of any
+// BMI -- clang 22 ASTWriter crash workaround).
+#include "completion_record.h"
 
 namespace backend_napi_v8 {
 

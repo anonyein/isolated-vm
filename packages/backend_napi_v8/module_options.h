@@ -45,4 +45,12 @@ struct module_handle_link_record {
 		};
 };
 
+// Purely internal (never in an interface signature); carries
+// std::vector<shared_remote<v8::Module>> whose specialization crashes clang 22's
+// ASTWriter if serialized into the :module_ interface BMI.
+struct remote_module_link_record {
+		std::vector<js::iv8::shared_remote<v8::Module>> modules;
+		std::vector<unsigned> payload;
+};
+
 } // namespace backend_napi_v8

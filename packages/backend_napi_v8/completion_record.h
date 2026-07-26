@@ -1,8 +1,23 @@
-export module backend_napi_v8:utility;
-import :environment;
-import auto_js;
-import std;
-import util;
+// Internal completion-record types for the backend_napi_v8 module.
+//
+// These types (normal_completion_record / throw_completion_record /
+// completion_record) carry `js::struct_template` reflection members and a
+// `js::visit<>` partial specialization. Defining them inside a module
+// interface partition (the former `backend_napi_v8:utility`) forces clang 22
+// to instantiate js::struct_template<js::struct_constant, js::struct_accessor
+// <...>> (a large std::tuple specialization) and serialize it into the
+// partition's BMI, which crashes clang 22's ASTWriter (llvm #165348 family).
+//
+// They are only ever constructed inside implementation units (module.cc /
+// script.cc / reference.cc etc.), never named in any interface-partition
+// signature, so we keep them as a plain header #included in the *module
+// purview* of those implementation units. Implementation units emit no BMI,
+// so the specialization is never serialized and clang does not crash.
+//
+// This header must be #included AFTER the unit's `import` declarations
+// (import auto_js; import util; import std;) so js::, util:: and std:: names
+// are visible; the definitions then attach to the backend_napi_v8 purview.
+#pragma once
 
 namespace backend_napi_v8 {
 using namespace js;

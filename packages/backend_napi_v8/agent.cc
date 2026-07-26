@@ -2,14 +2,16 @@ module backend_napi_v8;
 import :agent;
 import :realm;
 import :module_;
-import :utility;
 import auto_js;
 import std;
 import util;
 import v8_js;
 
-// Full definition of compile_module_options (forward-declared in :module_).
+// Full definitions of the option structs and completion_record (formerly the
+// :utility / :module_ interface partitions; moved to headers to avoid the
+// clang 22 ASTWriter BMI crash, llvm #165348 family).
 #include "module_options.h"
+#include "completion_record.h"
 
 namespace backend_napi_v8 {
 

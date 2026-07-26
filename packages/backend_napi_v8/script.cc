@@ -2,12 +2,14 @@ module backend_napi_v8;
 import :environment;
 import :lock;
 import :realm;
-import :utility;
 import auto_js;
 import napi_js;
 import std;
 import util;
 import v8_js;
+
+// Full definitions of the completion_record visitor types (was :utility partition).
+#include "completion_record.h"
 
 namespace backend_napi_v8 {
 

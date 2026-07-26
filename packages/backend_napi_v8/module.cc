@@ -2,7 +2,6 @@ module backend_napi_v8;
 import :environment;
 import :lock;
 import :realm;
-import :utility;
 import auto_js;
 import napi_js;
 import std;
@@ -15,6 +14,7 @@ import v8_js;
 // emits no BMI, so serializing their std::optional/std::tuple specializations
 // does not trip the clang 22 ASTWriter crash.
 #include "module_options.h"
+#include "completion_record.h"
 
 namespace backend_napi_v8 {
 

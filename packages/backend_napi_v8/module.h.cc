@@ -26,10 +26,10 @@ struct compile_module_options;
 struct create_capability_options;
 struct module_handle_link_record;
 
-struct remote_module_link_record {
-		std::vector<js::iv8::shared_remote<v8::Module>> modules;
-		std::vector<unsigned> payload;
-};
+// remote_module_link_record's full definition lives in "module_options.h"
+// (included in the implementation units) to keep its std::vector<shared_remote>
+// specialization out of this interface partition's BMI.
+struct remote_module_link_record;
 
 class subscriber_capability;
 

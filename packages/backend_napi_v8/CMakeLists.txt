@@ -43,7 +43,6 @@ target_sources(${backend_napi_v8}
 		reference.h.cc
 		runtime/runtime.h.cc
 		script.h.cc
-		utility.cc
 )
 target_embed_content(${backend_napi_v8} runtime/dist/interface.js runtime_dist_interface_js)
 

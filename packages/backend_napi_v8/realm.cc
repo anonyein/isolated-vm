@@ -3,7 +3,6 @@ import :environment;
 import :lock;
 import :module_;
 import :reference;
-import :utility;
 import auto_js;
 import std;
 import util;
@@ -11,6 +10,8 @@ import v8_js;
 
 // Full definitions of the option structs (forward-declared in :module_).
 #include "module_options.h"
+// Full definitions of the completion_record visitor types (was :utility partition).
+#include "completion_record.h"
 
 namespace backend_napi_v8 {
 
