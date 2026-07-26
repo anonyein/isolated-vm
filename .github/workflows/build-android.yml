@@ -33,15 +33,16 @@ env:
   # Standalone LLVM release used as the cross compiler. Must support C++26 and
   # ship std.cppm + libc++.modules.json.
   #
-  # Pinned to 22.1.0. clang 20/21/22 all crash the frontend (segfault in
-  # ASTReader::LoadExternalSpecializations / getCanonicalTemplateArgument) while
-  # emitting the *reduced* BMI for backend_napi_v8's `environment` module: the
-  # reduced-BMI lazy-specialization loader chokes on sealed_map's
-  # std::array<std::pair<string_view, napi::reference<...>>, N> instantiation
-  # (reproduces even at N=7, so it is not a tuple-size issue). The fix is to force
-  # full (non-reduced) BMI via -fno-modules-reduced-bmi, which pre-instantiates
-  # the specializations and avoids the crashing lazy-load path. That flag only
-  # exists on clang 22+, so we must be on 22.x (21 rejects it as unknown).
+  # Pinned to 22.1.0 to match the libc++ headers (see the header switch below):
+  # clang 22 parses libc++ 22's <optional>/<type_traits> during module BMI
+  # emission without the ICEs seen when clang 22 was fed the NDK's libc++ 18
+  # headers. We deliberately do NOT pass -fno-modules-reduced-bmi: the upstream
+  # (and successful) build uses the default reduced BMI, and forcing full BMI
+  # triggers a clang ASTReader lazy-specialization crash
+  # (LoadExternalSpecializations) when an importer pulls a trait specialization
+  # such as is_trivially_move_constructible<source_origin> out of a dependency
+  # BMI. Reduced BMI keeps those specializations out of the BMI so importers
+  # re-instantiate them locally instead.
   LLVM_VERSION: "22.1.0"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
@@ -357,8 +358,13 @@ jobs:
           # -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE / -D_LIBCPP_PSTL_CPU_BACKEND_THREAD /
           #   -D_LIBCPP_HARDENING_MODE=2: mirror the NDK __config_site so the header
           #   configuration matches the runtime.
-          # -fno-modules-reduced-bmi: force full BMI (harmless; avoids the reduced-BMI
-          #   lazy-specialization ASTReader crash). LLVM 22 supports it.
+          # NOTE: we deliberately do NOT pass -fno-modules-reduced-bmi. Forcing the
+          #   full BMI serializes trait specializations (e.g.
+          #   is_trivially_move_constructible<source_origin>) into the producer module's
+          #   BMI, and clang 22's ASTReader crashes lazily loading them from an importer
+          #   (LoadExternalSpecializations, llvm #165348). The default reduced BMI omits
+          #   those, so importers re-instantiate locally -- which is exactly what the
+          #   upstream (non-Android) build does successfully.
           set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC}")
           # -D__BIONIC_CTYPE_INLINE=inline: the C library headers (<ctype.h> etc.)
           # ALWAYS come from the NDK bionic sysroot, regardless of which libc++
@@ -373,7 +379,7 @@ jobs:
           # libc++ header search manually, so -stdlib=libc++ is unused for pure
           # module (.cppm) compiles and -Werror would otherwise reject it. We keep
           # -stdlib=libc++ because it is still needed at link time.
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -fno-modules-reduced-bmi -Wno-unused-command-line-argument")
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -Wno-unused-command-line-argument")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
