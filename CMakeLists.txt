@@ -64,7 +64,11 @@ if(CMAKE_BUILD_TYPE STREQUAL Release)
 	set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 	# LTO broken in gcc
 	# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=123970
-	if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+	# nb: Guarded by IVM_DISABLE_IPO so the Android cross-build can turn thin-LTO
+	# off. thin-LTO forces clang to emit bitcode and do cross-TU analysis, which
+	# amplifies the deep template instantiation recursion that crashes clang 23's
+	# StackExhaustionHandler when cross-compiling backend_napi_v8 for Android.
+	if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT IVM_DISABLE_IPO)
 		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 	endif()
 endif()

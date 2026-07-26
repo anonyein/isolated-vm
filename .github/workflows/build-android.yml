@@ -500,6 +500,7 @@ jobs:
             -DV8_TRICKSHOT= \
             -DCMAKE_CXX_STDLIB_MODULES_JSON="${STDLIB_MODULES_JSON}" \
             -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+            -DIVM_DISABLE_IPO=ON \
             -DIVM_INSTALL=artifacts
 
       - name: Build
