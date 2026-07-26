@@ -80,7 +80,13 @@ struct accept_with_throw::accept_throw : Accept {
 		using Accept::operator();
 		constexpr auto operator()(auto tag, auto& visit, auto&& subject) const -> accept_target_type
 			requires(!std::invocable<const Accept&, decltype(tag), decltype(visit), decltype(subject)>) {
-			throw js::type_error{util::consteval_strcat(util::cw<u"expected ">, expected_tag_message<Accept>(), util::cw<u", but got ">, message_for_tag(tag))};
+			// nb: Hoist the consteval_strcat result into a constexpr local so the
+			// consteval evaluation happens in a controlled constant context. Calling
+			// consteval_strcat directly in the throw expression makes clang's new
+			// constant interpreter escalate this whole operator() into an immediate
+			// function (P2564), which then poisons the entire visit/accept call chain.
+			constexpr auto message = util::consteval_strcat(util::cw<u"expected ">, expected_tag_message<Accept>(), util::cw<u", but got ">, message_for_tag(decltype(tag){}));
+			throw js::type_error{message};
 		}
 };
 
