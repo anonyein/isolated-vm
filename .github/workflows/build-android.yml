@@ -111,28 +111,59 @@ jobs:
           echo "LLVM_DIR=$LLVM_DIR" >> "$GITHUB_ENV"
           "$LLVM_DIR/bin/clang++" --version
 
-          # Locate the bundled libc++ headers. The LLVM-*-Linux-X64 tarball may
-          # place them at include/c++/v1 or include/<triple>/c++/v1. We must feed
-          # this exact dir via -isystem (with -nostdinc++) since we cross-compile
-          # to Android and cannot rely on clang's default libc++ search. Pick the
-          # dir that actually contains the <version> header, and require that a
-          # probe including it defines _LIBCPP_VERSION (this is exactly what CMake
-          # checks during enable_language(CXX); if it fails there, import std is
-          # declared unsupported).
+          # Locate the bundled libc++ headers. Because we cross-compile to Android
+          # with the NDK sysroot, we force LLVM 22's own libc++ headers via
+          # -nostdinc++ + -isystem (the NDK's libc++ 18 headers crash clang 22's
+          # BMI machinery). libc++ headers come in TWO parts:
+          #   - the generic tree      include/c++/v1/         (has <version>, __config)
+          #   - a per-target config   include/<triple>/c++/v1/__config_site
+          # __config is `#include <__config_site>`, and __config_site is generated
+          # per build config and lives ONLY in the per-target dir. With -nostdinc++
+          # clang no longer adds the per-target dir automatically, so we must feed
+          # BOTH dirs via -isystem (config-site dir first). Verify a probe including
+          # <version> defines _LIBCPP_VERSION -- exactly what CMake checks during
+          # enable_language(CXX); if it fails there import std is declared unsupported.
           LIBCXX_INC=""
-          for cand in \
-            "$LLVM_DIR/include/c++/v1" \
-            "$LLVM_DIR"/include/*/c++/v1; do
-            if [ -f "$cand/version" ] || [ -f "$cand/__config" ]; then
-              LIBCXX_INC="$cand"; break
-            fi
+          for cand in "$LLVM_DIR/include/c++/v1" "$LLVM_DIR"/include/*/c++/v1; do
+            if [ -f "$cand/version" ]; then LIBCXX_INC="$cand"; break; fi
           done
-          test -n "$LIBCXX_INC" || { echo "ERROR: no bundled libc++ headers in LLVM tarball" >&2; find "$LLVM_DIR/include" -maxdepth 3 -name version -o -name __config 2>/dev/null; exit 1; }
-          echo "libc++ headers: $LIBCXX_INC"
-          printf '#include <version>\n#ifndef _LIBCPP_VERSION\n#error not libc++\n#endif\nint main(){return 0;}\n' > /tmp/libcxx_probe.cc
-          "$LLVM_DIR/bin/clang++" -nostdinc++ -isystem "$LIBCXX_INC" \
+          ORIG_SITE=""
+          for cand in \
+            "$LLVM_DIR"/include/*/c++/v1 \
+            "$LLVM_DIR/include/c++/v1"; do
+            if [ -f "$cand/__config_site" ]; then ORIG_SITE="$cand/__config_site"; break; fi
+          done
+          test -n "$LIBCXX_INC" || { echo "ERROR: no bundled libc++ <version> header" >&2; find "$LLVM_DIR/include" -maxdepth 4 -name version 2>/dev/null; exit 1; }
+          test -n "$ORIG_SITE" || { echo "ERROR: no bundled libc++ __config_site" >&2; find "$LLVM_DIR/include" -maxdepth 4 -name __config_site 2>/dev/null; exit 1; }
+          echo "libc++ headers: $LIBCXX_INC ; original config-site: $ORIG_SITE"
+
+          # Build a PATCHED __config_site that forces the NDK ABI knobs. The Javet
+          # .so was linked against the NDK's libc++_shared (inline namespace
+          # std::__ndk1::, _LIBCPP_ABI_VERSION 1). We compile with LLVM 22's libc++
+          # headers but MUST land std:: symbols in __ndk1 so we can link against
+          # Javet's V8 C++ API (which passes std types across the boundary). The
+          # bundled site is generated for the host default (__1); relying on a
+          # command-line -D is fragile (if the site file hard-#defines the
+          # namespace, -D loses). So we copy the site and deterministically rewrite
+          # the ABI namespace to __ndk1, injecting it if absent. Everything else
+          # (hardening, etc.) is inherited from the bundled site unchanged.
+          LIBCXX_SITE=/tmp/libcxx-site/c++/v1
+          mkdir -p "$LIBCXX_SITE"
+          grep -v '_LIBCPP_ABI_NAMESPACE' "$ORIG_SITE" > "$LIBCXX_SITE/__config_site"
+          # Insert our namespace define right after the header guard's first #define.
+          awk 'NR==1{print} NR==1{print "#define _LIBCPP_ABI_NAMESPACE __ndk1"} NR>1{print}' \
+            "$LIBCXX_SITE/__config_site" > "$LIBCXX_SITE/__config_site.tmp"
+          mv "$LIBCXX_SITE/__config_site.tmp" "$LIBCXX_SITE/__config_site"
+          echo "--- patched __config_site ---"; cat "$LIBCXX_SITE/__config_site"
+
+          # Probe: -isystem the patched site FIRST, then the generic tree. Confirm
+          # _LIBCPP_VERSION is defined (what CMake checks at enable_language(CXX))
+          # and the ABI namespace really is __ndk1.
+          printf '#include <version>\n#ifndef _LIBCPP_VERSION\n#error not libc++\n#endif\n#include <string>\nauto s = std::__ndk1::string{};\nint main(){return 0;}\n' > /tmp/libcxx_probe.cc
+          "$LLVM_DIR/bin/clang++" -nostdinc++ -isystem "$LIBCXX_SITE" -isystem "$LIBCXX_INC" \
             --target=x86_64-unknown-linux-gnu -std=c++26 -fsyntax-only /tmp/libcxx_probe.cc
           echo "LIBCXX_INC=$LIBCXX_INC" >> "$GITHUB_ENV"
+          echo "LIBCXX_SITE=$LIBCXX_SITE" >> "$GITHUB_ENV"
 
       - name: Setup Android NDK
         run: |
@@ -328,8 +359,8 @@ jobs:
           #   configuration matches the runtime.
           # -fno-modules-reduced-bmi: force full BMI (harmless; avoids the reduced-BMI
           #   lazy-specialization ASTReader crash). LLVM 22 supports it.
-          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_INC}")
-          set(_libcxx_abi "-D_LIBCPP_ABI_NAMESPACE=__ndk1 -D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE")
+          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC}")
+          set(_libcxx_abi "-D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE")
           set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -fno-modules-reduced-bmi")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
