@@ -303,6 +303,15 @@ jobs:
             echo "ERROR: standalone LLVM did not ship a host libc++.modules.json" >&2
             exit 1
           fi
+          echo "--- libc++.modules.json content ---"
+          cat "${RESOLVED}"
+          echo "--- resolve std.cppm referenced by json ---"
+          JSON_DIR="$(dirname "${RESOLVED}")"
+          # modules.json "source-path" is relative to the json's directory.
+          SRC_REL="$(grep -oE '"source-path"[^,]*' "${RESOLVED}" | head -n1 | sed -E 's/.*:\s*"([^"]+)".*/\1/')"
+          echo "source-path (relative) = ${SRC_REL}"
+          echo "resolves to = ${JSON_DIR}/${SRC_REL}"
+          ls -l "${JSON_DIR}/${SRC_REL}" || { echo "ERROR: std.cppm referenced by modules.json is missing (Debian libc++ may not ship module sources)" >&2; find /usr/lib/llvm-22 -name 'std.cppm' 2>/dev/null; exit 1; }
           echo "Using bundled std module manifest: ${RESOLVED}"
           echo "json=${RESOLVED}" >> "$GITHUB_OUTPUT"
 
