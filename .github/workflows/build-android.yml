@@ -400,10 +400,16 @@ jobs:
           # libc++ header search manually, so -stdlib=libc++ is unused for pure
           # module (.cppm) compiles and -Werror would otherwise reject it. We keep
           # -stdlib=libc++ because it is still needed at link time.
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -Wno-unused-command-line-argument")
-          set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
-          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
-          set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
+          # --rtlib=compiler-rt --unwindlib=libunwind: Debian's apt clang defaults to
+          # --rtlib=libgcc, but the Android sysroot has no libgcc (it uses
+          # compiler-rt builtins + libunwind, which we staged into the resource
+          # dir above). Force compiler-rt so linking finds -l:libclang_rt.builtins
+          # / libunwind instead of the missing -lgcc.
+          set(_rtlib "--rtlib=compiler-rt --unwindlib=libunwind")
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} \${_rtlib} -Wno-unused-command-line-argument")
+          set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
+          set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
 
           set(CMAKE_FIND_ROOT_PATH "\${_sysroot}")
           # PROGRAM NEVER: use host tools (node, sh) for the npm resolver.
