@@ -361,7 +361,11 @@ jobs:
           #   lazy-specialization ASTReader crash). LLVM 22 supports it.
           set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC}")
           set(_libcxx_abi "-D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE")
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -fno-modules-reduced-bmi")
+          # -Wno-unused-command-line-argument: with -nostdinc++ we take over the
+          # libc++ header search manually, so -stdlib=libc++ is unused for pure
+          # module (.cppm) compiles and -Werror would otherwise reject it. We keep
+          # -stdlib=libc++ because it is still needed at link time.
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -fno-modules-reduced-bmi -Wno-unused-command-line-argument")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
