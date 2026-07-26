@@ -3,7 +3,14 @@ import auto_js;
 import napi_js;
 import std;
 import v8_js;
-using namespace js;
+// NOTE: deliberately NO `using namespace js;` here. This partition is imported
+// by every other backend interface partition (module_, reference, ...). A
+// namespace-scope using-directive that pulls the entire (huge) js:: namespace
+// inflates this module's visible name-lookup table, which clang 22 serializes
+// via ASTWriter::GenerateNameLookupTable -- and that routine SmallVector-
+// overflows / segfaults once the merged table (this partition + napi_js + v8_js
+// + agent_handle) grows large enough (the module.h.cc / reference.h.cc crashes).
+// Fully-qualifying the handful of js:: names we use keeps the table small.
 using namespace std::string_view_literals;
 
 namespace backend_napi_v8 {
@@ -58,25 +65,25 @@ constexpr std::string_view class_names[] = {
 
 // Instance of the `isolated-vm` module, once per nodejs environment.
 export class environment
-		: public napi::environment,
-			public napi::string_table<string_literals>,
-			public napi::class_template_references<class_names> {
+		: public js::napi::environment,
+			public js::napi::string_table<string_literals>,
+			public js::napi::class_template_references<class_names> {
 	public:
 		explicit environment(napi_env env);
 		~environment();
 
-		auto agent_class() -> napi::local_of<function_tag> { return agent_class_.get(*this); }
-		auto cluster() -> iv8::isolated::cluster& { return cluster_; }
+		auto agent_class() -> js::napi::local_of<js::function_tag> { return agent_class_.get(*this); }
+		auto cluster() -> js::iv8::isolated::cluster& { return cluster_; }
 		// NOLINTNEXTLINE(performance-unnecessary-value-param)
 		auto destroy_orphan_scheduler(std::any isolate_scheduler) -> void;
-		auto module_class() -> napi::local_of<function_tag> { return module_class_.get(*this); }
+		auto module_class() -> js::napi::local_of<js::function_tag> { return module_class_.get(*this); }
 
-		auto make_initialize() -> napi::local_of<function_tag>;
+		auto make_initialize() -> js::napi::local_of<js::function_tag>;
 
 	private:
-		iv8::isolated::cluster cluster_;
-		napi::reference<function_tag> agent_class_;
-		napi::reference<function_tag> module_class_;
+		js::iv8::isolated::cluster cluster_;
+		js::napi::reference<js::function_tag> agent_class_;
+		js::napi::reference<js::function_tag> module_class_;
 };
 
 // Common types
