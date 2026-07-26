@@ -18,6 +18,7 @@ import v8_js;
 #include "subscriber_capability.h"
 // module_handle was the exported class of :module_; now a plain header.
 #include "module_handle.h"
+#include "realm_handle.h"
 
 namespace backend_napi_v8 {
 

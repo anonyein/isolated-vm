@@ -27,8 +27,9 @@ import v8_js;
 // header (moved out to avoid the clang 23 ASTWriter::GenerateNameLookupTable
 // crash on Android cross-compile). Included in the module purview here.
 #include "module_handle.h"
+#include "realm_handle.h"
 
-using namespace backend_napi_v8;
+namespace backend_napi_v8 {
 
 // Sanity check ensuring that, at least in principle, `js::transfer` can directly transfer from
 // runtime to runtime without intermediates.
@@ -58,3 +59,5 @@ js::napi::napi_js_module module_namespace{
 		};
 	}
 };
+
+} // namespace backend_napi_v8

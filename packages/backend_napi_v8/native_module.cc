@@ -19,6 +19,7 @@ import v8_js;
 // module_handle: was the exported class of :module_, now a plain header (avoids
 // the clang 23 ASTWriter::GenerateNameLookupTable crash on Android cross-compile).
 #include "module_handle.h"
+#include "realm_handle.h"
 
 namespace backend_napi_v8 {
 

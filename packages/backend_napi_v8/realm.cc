@@ -16,6 +16,7 @@ import v8_js;
 // header to avoid the clang 23 ASTWriter::GenerateNameLookupTable crash.
 #include "reference_handle.h"
 #include "module_handle.h"
+#include "realm_handle.h"
 
 namespace backend_napi_v8 {
 

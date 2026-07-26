@@ -1,3 +1,5 @@
+module;
+#include "auto_js/gcc_abi_tag.h"
 export module backend_napi_v8:realm;
 import :agent_handle;
 import :environment;
@@ -8,25 +10,14 @@ import v8_js;
 
 namespace backend_napi_v8 {
 
-export class realm_handle {
-	public:
-		using transfer_type = js::tagged_external<realm_handle>;
-
-		realm_handle(agent_handle agent, js::iv8::shared_remote<v8::Context> realm);
-
-		auto agent() -> agent_handle& { return agent_; }
-		auto realm() -> js::iv8::shared_remote<v8::Context>& { return realm_; }
-
-		auto acquire_global_object(environment& env) -> forward_promise_type;
-		auto instantiate_runtime(environment& env) -> forward_promise_type;
-		auto create_capability(environment& env, forward_callback_type make_capability, create_capability_options options) -> forward_promise_type;
-
-		static auto create(environment& env, agent_handle& agent) -> forward_promise_type;
-		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<realm_handle>>;
-
-	private:
-		agent_handle agent_;
-		js::iv8::shared_remote<v8::Context> realm_;
-};
+// realm_handle's full definition lives in "realm_handle.h" (included in the
+// module purview of the implementation units). Defining it HERE, in this
+// interface partition, makes clang serialize its visible-name lookup table into
+// this partition's BMI, which crashes clang 23's
+// ASTWriter::GenerateNameLookupTable / getLookupVisibility (infinite
+// redecl-chain recursion, llvm #161215) when cross-compiling for Android. Other
+// partitions that mention realm_handle (native_module.h.cc / script.h.cc) only
+// use it by pointer, so this forward declaration is sufficient for them.
+export class realm_handle;
 
 } // namespace backend_napi_v8
