@@ -95,7 +95,7 @@ struct accept<Meta, std::tuple<Types...>> {
 			return {accept_n.visit_and_advance(visit, it, end)...};
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return util::pack_concat(accept<Meta, Types>::types(recursive)...);
 		}
 

@@ -296,7 +296,7 @@ struct accept_napi_value : accept_basic_napi_value {
 			return static_cast<Environment&>(accept_basic_napi_value::environment());
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // Forward `value_of<T>`
@@ -309,8 +309,8 @@ struct accept_napi_value_of {
 			return subject;
 		}
 
-		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // `local_of<object_tag>{}->assign(...)` implementation
@@ -391,7 +391,7 @@ struct accept<Meta, napi::object_assign_delegate> {
 			return self.object_;
 		}
 
-		consteval static auto types(auto recursive) { return accept<Meta, napi_value>::types(recursive); }
+		constexpr static auto types(auto recursive) { return accept<Meta, napi_value>::types(recursive); }
 
 	private:
 		accept_value<Meta, napi_value> accept_;

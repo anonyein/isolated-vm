@@ -31,7 +31,7 @@ struct accept_object_property {
 			}
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return accept<Meta, value_type>::types(recursive);
 		}
 
@@ -86,7 +86,7 @@ struct accept_struct_properties<Meta, Type, js::struct_template<Property...>> {
 			return target;
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			const auto [... properties ] = descriptor_type::properties.as_tuple();
 			return util::pack_concat(accept_object_property<Meta, decltype(properties)>::types(recursive)...);
 		}

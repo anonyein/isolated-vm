@@ -27,7 +27,7 @@ struct visit<void, Enum> {
 			);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		consteval static auto make_enum_map() {

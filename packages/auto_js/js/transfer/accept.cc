@@ -48,7 +48,7 @@ struct accept<void, forward<Type, Tag>> {
 		}
 
 		constexpr static auto accept_tags_of() { return std::tuple<Tag>{}; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // `accept` delegated to a sub class passed down from the constructor
@@ -67,7 +67,7 @@ struct accept_delegated : util::reference_wrapper<Accept> {
 				util::reference_wrapper<Accept>{*static_cast<Accept*>(transfer)} {}
 
 		constexpr static auto accept_tags_of() { return js::accept_tags_of_v<Accept>; }
-		consteval static auto types(auto recursive) -> auto { return Accept::types(recursive); }
+		constexpr static auto types(auto recursive) -> auto { return Accept::types(recursive); }
 };
 
 // `accept_value_from` is the implementation of `accept_value`. It is an `accept` wrapper which most

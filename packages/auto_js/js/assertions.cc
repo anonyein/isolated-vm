@@ -128,7 +128,7 @@ struct specialized {
 template <>
 struct accept<void, specialized> {
 		constexpr auto operator()(object_tag /*tag*/, visit_holder /*visit*/, auto value) const -> specialized { return value; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 template <>
@@ -138,7 +138,7 @@ struct visit<void, specialized> {
 			return accept(object_tag{}, *this, value);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 static_assert(transfer<specialized>(specialized{}) == specialized{});

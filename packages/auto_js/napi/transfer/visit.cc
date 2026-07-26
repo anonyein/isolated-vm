@@ -268,7 +268,7 @@ struct visit_value : reference_map_t<Reference, reference_map_type> {
 		// extras
 		[[nodiscard]] auto environment() const -> Environment& { return env_; }
 		explicit operator napi_env() const { return napi_env{env_.get()}; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		// I think this only applies to `symbol_tag`
@@ -430,7 +430,7 @@ struct visit_napi_value_of {
 			return accept(list_tag{}, visit_entry, subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		visit_type visit_;

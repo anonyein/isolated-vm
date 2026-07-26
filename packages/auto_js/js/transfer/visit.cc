@@ -35,7 +35,7 @@ struct visit<void, forward<Type>> {
 			return *std::forward<decltype(subject)>(subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // `visit` delegated to a sub class passed down from the constructor
@@ -52,7 +52,7 @@ struct visit_delegated : util::reference_wrapper<Visit> {
 		}
 
 		consteval static auto visit_with_reference_map() -> bool { return js::visit_with_reference_map<Visit>; }
-		consteval static auto types(auto recursive) -> auto { return Visit::types(recursive); }
+		constexpr static auto types(auto recursive) -> auto { return Visit::types(recursive); }
 };
 
 // Utility to pass oneself as an object entry visitor

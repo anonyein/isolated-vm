@@ -191,7 +191,7 @@ struct visit_vm_value {
 		}
 
 		[[nodiscard]] auto lock() const -> const runtime_lock& { return lock_.get(); }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		template <class Accept>
@@ -305,7 +305,7 @@ struct visit_vm_value_of {
 			return accept(list_tag{}, visit_entry, subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		visit_type visit_;

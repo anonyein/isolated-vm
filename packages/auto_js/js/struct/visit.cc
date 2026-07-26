@@ -48,7 +48,7 @@ struct visit_object_property {
 			};
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return visit<Meta, typename getter_type::value_type>::types(recursive);
 		}
 
@@ -91,7 +91,7 @@ struct visit_struct_properties<Meta, Type, js::struct_template<Property...>> {
 			return accept(struct_tag<sizeof...(Property)>{}, *this, std::forward<decltype(subject)>(subject));
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			const auto [... properties ] = descriptor_type::properties.as_tuple();
 			return util::pack_concat(visit_object_property<Meta, decltype(properties)>::types(recursive)...);
 		}

@@ -137,7 +137,7 @@ struct visit_flat_value : reference_map_t<Reference, visit_reference_map_type> {
 
 		// extras
 		[[nodiscard]] auto witness() const -> auto { return isolate_lock_; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	protected:
 		// primitives
@@ -461,7 +461,7 @@ struct visit_v8_value_of {
 			return accept(list_tag{}, visit_entry, subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		visit_type visit_;
@@ -481,7 +481,7 @@ struct visit_template {
 			return accept(object_prototype_tag{}, *this, subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 } // namespace js::iv8

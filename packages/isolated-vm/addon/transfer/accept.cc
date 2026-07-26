@@ -89,7 +89,7 @@ struct accept_vm_primitive {
 		}
 
 		[[nodiscard]] auto lock() const -> const basic_lock& { return lock_; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		std::reference_wrapper<const basic_lock> lock_;
@@ -260,8 +260,8 @@ struct accept_vm_value_of {
 			return subject;
 		}
 
-		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // Object key lookup (struct_template, etc)

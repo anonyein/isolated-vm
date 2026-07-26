@@ -128,7 +128,7 @@ struct accept<Meta, vector_of<Tag, Entry>> {
 			};
 		}
 
-		consteval static auto types(auto recursive) { return accept_type::types(recursive); }
+		constexpr static auto types(auto recursive) { return accept_type::types(recursive); }
 
 	private:
 		accept_type accept_;

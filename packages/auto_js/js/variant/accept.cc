@@ -64,7 +64,7 @@ struct accept_object_covariants : accept_object_covariant<Meta, Variant, Types>.
 		// Ensure that this class has an `operator()` for the `using <...>::operator()` declarations
 		auto operator()() = delete;
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return util::pack_concat(accept_object_covariant<Meta, Variant, Types>::types(recursive)...);
 		}
 };
@@ -93,7 +93,7 @@ struct accept_external_covariants<Meta, Variant, js::tagged_external<Types>...> 
 			return try_accept(types...);
 		}
 
-		consteval static auto types(auto /*recursive*/) -> auto {
+		constexpr static auto types(auto /*recursive*/) -> auto {
 			return util::type_pack{};
 		}
 };
@@ -131,7 +131,7 @@ struct accept_object_and_host_covariants<Meta, Variant, util::type_pack<Objects.
 			}
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return (
 				accept_object_covariants<Meta, Variant, Objects...>::types(recursive) +
 				accept_external_covariants<Meta, Variant, Externals...>::types(recursive)
@@ -156,7 +156,7 @@ struct accept_covariants<Meta, Variant, util::type_pack<util::type_pack<Primitiv
 		using accept_primitive_covariant<Meta, Variant, Primitives>::operator()...;
 		using accept_object_and_host_covariants<Meta, Variant, Objects, Externals>::operator();
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return util::pack_concat(
 				accept_primitive_covariant<Meta, Variant, Primitives>::types(recursive)...,
 				accept_object_and_host_covariants<Meta, Variant, Objects, Externals>::types(recursive)

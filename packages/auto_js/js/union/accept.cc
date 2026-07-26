@@ -46,7 +46,7 @@ struct accept<Meta, std::variant<Types...>> {
 			return accept_alternative->second(*this, visit, std::forward<decltype(subject)>(subject));
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return (accept_value<Meta, Types>::types(recursive) + ...);
 		}
 

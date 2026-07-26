@@ -95,7 +95,7 @@ struct accept_v8_primitive {
 		}
 
 		// extras
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 
 	private:
 		v8::Isolate* isolate_;
@@ -381,8 +381,8 @@ struct accept_v8_value_of {
 			return subject;
 		}
 
-		consteval static auto accept_tags_of() { return std::tuple{Tag{}}; }
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto accept_tags_of() { return std::tuple{Tag{}}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // `return_into(...)`
@@ -463,7 +463,7 @@ struct accept_v8_object_assign {
 			return {};
 		}
 
-		consteval static auto types(auto recursive) { return accept<Meta, v8::Local<v8::Value>>::types(recursive); }
+		constexpr static auto types(auto recursive) { return accept<Meta, v8::Local<v8::Value>>::types(recursive); }
 
 	private:
 		accept_value<Meta, v8::Local<v8::Value>> accept_;

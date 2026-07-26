@@ -16,7 +16,7 @@ struct visit_value_tagged {
 			return accept(Tag{}, *this, std::forward<decltype(subject)>(subject));
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // `undefined` & `null`
@@ -71,7 +71,7 @@ struct visit<void, Char[ Extent ]> {
 			return accept(string_tag_of<Char>{}, *this, std::basic_string_view<Char>{subject, Extent - 1});
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
@@ -85,7 +85,7 @@ struct visit<void, util::constant_wrapper<Value>> {
 			return accept(string_tag_of<Char>{}, *this, subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 // `Error` types
@@ -96,7 +96,7 @@ struct visit<void, js::error_value> {
 			return accept(error_tag{}, *this, subject);
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 template <>
@@ -178,7 +178,7 @@ struct visit<Meta, std::pair<Key, Value>> {
 			};
 		}
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return visit<Meta, Key>::types(recursive) + visit<Meta, Value>::types(recursive);
 		}
 

@@ -141,7 +141,7 @@ struct visit<Meta, recursive_value_holder<Make, Extract>>
 	public:
 		using visit_type::visit_type;
 
-		consteval static auto types(auto recursive) -> auto {
+		constexpr static auto types(auto recursive) -> auto {
 			return util::type_pack{type<delegated_type>} + delegated_type::types(recursive);
 		}
 
@@ -180,7 +180,7 @@ struct visit_recursive_value_holder<Meta, Value, util::type_pack<Refs...>>
 
 		// Infinite recursion check.
 		template <class... Seen>
-		consteval static auto types(util::type_pack<Seen...> recursive) {
+		constexpr static auto types(util::type_pack<Seen...> recursive) {
 			if constexpr ((... || (type<Seen> == type<value_type>))) {
 				return util::type_pack{};
 			} else {

@@ -21,7 +21,7 @@ struct visit<void, free_function<Function>> {
 			return accept(function_prototype_tag{}, *this, std::forward<decltype(function)>(function));
 		}
 
-		consteval static auto types(auto /*recursive*/) { return util::type_pack{}; }
+		constexpr static auto types(auto /*recursive*/) { return util::type_pack{}; }
 };
 
 } // namespace js
