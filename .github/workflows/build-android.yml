@@ -388,14 +388,15 @@ jobs:
           # -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE / -D_LIBCPP_PSTL_CPU_BACKEND_THREAD /
           #   -D_LIBCPP_HARDENING_MODE=2: mirror the NDK __config_site so the header
           #   configuration matches the runtime.
-          # -fno-modules-reduced-bmi: force the FULL BMI. Both BMI modes hit the same
-          #   clang 22 ASTReader lazy-specialization crash (llvm #165348), but they
-          #   crash at different points. Empirically the full BMI is strictly better on
-          #   this codebase: with our sealed_map/C-array source fixes it compiles 505 of
-          #   525 modules and only trips on a handful of remaining importer files, which
-          #   we then fix at the source level. The default reduced BMI crashes much
-          #   earlier (environment.h.cc's string_table), so we pin full BMI here.
-          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC} -fno-modules-reduced-bmi")
+          # BMI mode: we use the DEFAULT reduced BMI (do NOT pass
+          #   -fno-modules-reduced-bmi). This matches the upstream build that
+          #   succeeds with clang 22. The remaining ASTWriter crash
+          #   (getLookupVisibility / WriteDeclContextVisibleUpdate, llvm #161215)
+          #   is in the *visible name lookup table* path; reduced BMI serializes
+          #   less of that, so with our source fixes in place (C-array string
+          #   tables, structs moved out of interface BMIs, no module-purview
+          #   `using namespace js`) it is worth using the leaner mode here.
+          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC}")
           # -D__BIONIC_CTYPE_INLINE=inline: the C library headers (<ctype.h> etc.)
           # ALWAYS come from the NDK bionic sysroot, regardless of which libc++
           # headers we use. bionic defines isalnum/isalpha/... as `static __inline`
