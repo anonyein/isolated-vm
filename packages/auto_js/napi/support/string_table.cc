@@ -34,7 +34,7 @@ class string_table {
 			constexpr auto string_sv = util::make_consteval_string_view(string_value);
 			constexpr auto index = string_index_of<Strings>.lookup(string_sv);
 			if constexpr (index) {
-				return util::just<napi::reference<string_tag>&>{string_literal_storage_.at(*index)};
+				return util::just<napi::reference<string_tag>&>{string_literal_storage_[*index]};
 			} else {
 				// static_assert(!Options.strict, std::format("String literal '{}' is missing in storage", string_sv));
 				static_assert(!Options.strict, "String literal '"s + string_sv + "' is missing in storage"s);
@@ -43,8 +43,14 @@ class string_table {
 		}
 
 	private:
+		// nb: A C-style array (NOT std::array). std::array<reference<>, N> is a
+		// class-template specialization that clang's ASTReader crashes on
+		// (abort/segfault in LoadExternalSpecializations) while lazily
+		// deserializing it from this module's BMI when `environment` derives from
+		// this template. A builtin array is not a class-template specialization,
+		// so it never touches that code path; element access uses operator[].
 		static constexpr std::size_t table_size_ = std::extent_v<std::remove_cvref_t<decltype(Strings)>>;
-		std::array<napi::reference<string_tag>, table_size_> string_literal_storage_;
+		napi::reference<string_tag> string_literal_storage_[table_size_];
 };
 
 } // namespace js::napi

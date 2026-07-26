@@ -38,7 +38,7 @@ class class_template_references {
 				//    38 |                         static_assert(index, "Class template '"s + name_sv + "' is missing in storage"s);
 				static_assert(index, "Class template '"s + name_sv + "' is missing in storage"s);
 			}
-			auto& reference = self.class_template_references_.at(*index);
+			auto& reference = self.class_template_references_[*index];
 			using value_type = js::napi::local_of<class_tag_of<Type>>;
 			if (reference) {
 				return value_type::from(reference.get(self));
@@ -50,8 +50,14 @@ class class_template_references {
 		}
 
 	private:
+		// nb: A C-style array (NOT std::array). std::array<reference<>, N> is a
+		// class-template specialization that clang's ASTReader crashes on
+		// (LoadExternalSpecializations) while deserializing it from this module's
+		// BMI into a consumer that instantiates the base via a reference NTTP. A
+		// builtin array is not a class-template specialization, so it dodges that
+		// code path entirely; element access uses operator[] instead of .at().
 		static constexpr std::size_t table_size_ = std::extent_v<std::remove_cvref_t<decltype(Strings)>>;
-		std::array<napi::reference<class_tag>, table_size_> class_template_references_;
+		napi::reference<class_tag> class_template_references_[table_size_];
 };
 
 } // namespace js::napi
