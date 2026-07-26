@@ -31,10 +31,9 @@ export constexpr auto forward_range(auto& range) -> auto& {
 export constexpr auto forward_range(auto&& range) {
 	using value_type = decltype(*std::begin(std::forward<decltype(range)>(range)));
 	if constexpr (std::is_reference_v<value_type>) {
-		auto forward =
-			range | std::views::transform([](auto& value) -> auto&& {
-				return std::forward_like<decltype(range)>(value);
-			});
+		auto forward = std::views::transform(range, [](auto& value) -> auto&& {
+			return std::forward_like<decltype(range)>(value);
+		});
 		return forward;
 	} else {
 		return std::forward<decltype(range)>(range);

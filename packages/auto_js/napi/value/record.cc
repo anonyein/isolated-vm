@@ -4,7 +4,10 @@ import std;
 namespace js::napi {
 
 auto value_for_record::into_range() const -> range_type {
-	return keys() | std::views::transform(iterator_transform{*this});
+	// nb: construct the transform_view directly instead of `keys() | views::transform(...)`.
+	// libc++ 23's ranges pipe operator| resolution differs and rejects the pipe form here;
+	// direct construction of range_type is equivalent and version-independent.
+	return range_type{keys(), iterator_transform{*this}};
 }
 
 auto value_for_record::size() const -> std::size_t {
