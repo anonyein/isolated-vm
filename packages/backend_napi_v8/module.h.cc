@@ -2,6 +2,7 @@ module;
 #include "auto_js/gcc_abi_tag.h"
 export module backend_napi_v8:module_;
 import :agent_handle;
+import :environment;
 import napi_js;
 import std;
 import util;
@@ -10,15 +11,6 @@ import v8_js;
 namespace backend_napi_v8 {
 export class module_handle;
 export class realm_handle;
-
-// environment is only used by-reference in the signatures below, so a forward
-// declaration suffices. We deliberately do NOT `import :environment` here:
-// importing it (on top of :agent_handle + napi_js) merges a large visible
-// name-lookup table that clang 22 crashes on while serializing this partition's
-// BMI (ASTWriter::GenerateNameLookupTable / getLookupVisibility, llvm #161215).
-// forward_promise_type is the alias from :environment expanded inline.
-class environment;
-using forward_promise_type = js::forward<js::napi::local_of<js::promise_tag>>;
 
 // NOTE: The full definitions of these option structs live in
 // "module_options.h" and are #included in the module purview of the
