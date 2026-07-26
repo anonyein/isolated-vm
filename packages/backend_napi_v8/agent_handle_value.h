@@ -95,7 +95,13 @@ struct union_of<agent_handle_value::create_options::clock_type> {
 		constexpr static auto& discriminant = util::cw<"type">;
 		// util::flat_tuple (not std::tuple): instantiating std::tuple<alternative...>
 		// crashes clang 23 when cross-compiling for Android (llvm #161215 family).
-		constexpr static auto alternatives = util::flat_tuple{
+		// Explicit template args: CTAD can't deduce from the heterogeneous
+		// alternative<> braces.
+		constexpr static auto alternatives = util::flat_tuple<
+			alternative<agent_handle_value::clock_deterministic>,
+			alternative<agent_handle_value::clock_microtask>,
+			alternative<agent_handle_value::clock_realtime>,
+			alternative<agent_handle_value::clock_system>>{
 			alternative<agent_handle_value::clock_deterministic>{"deterministic"},
 			alternative<agent_handle_value::clock_microtask>{"microtask"},
 			alternative<agent_handle_value::clock_realtime>{"realtime"},

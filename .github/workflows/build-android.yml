@@ -405,7 +405,7 @@ jobs:
           #   525 modules and only trips on a handful of remaining importer files, which
           #   we then fix at the source level. The default reduced BMI crashes much
           #   earlier (environment.h.cc's string_table), so we pin full BMI here.
-          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC} -fno-modules-reduced-bmi")
+          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC}")
           # -D__BIONIC_CTYPE_INLINE=inline: the C library headers (<ctype.h> etc.)
           # ALWAYS come from the NDK bionic sysroot, regardless of which libc++
           # headers we use. bionic defines isalnum/isalpha/... as `static __inline`
