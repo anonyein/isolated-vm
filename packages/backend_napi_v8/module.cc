@@ -9,6 +9,13 @@ import std;
 import util;
 import v8_js;
 
+// Full definitions of compile_module_options / create_capability_options /
+// module_handle_link_record (forward-declared in the :module_ interface).
+// Included in the module purview so they attach to backend_napi_v8; this unit
+// emits no BMI, so serializing their std::optional/std::tuple specializations
+// does not trip the clang 22 ASTWriter crash.
+#include "module_options.h"
+
 namespace backend_napi_v8 {
 
 module_handle::module_handle(agent_handle agent, js::iv8::shared_remote<v8::Module> module) :

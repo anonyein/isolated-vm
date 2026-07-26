@@ -12,32 +12,19 @@ namespace backend_napi_v8 {
 export class module_handle;
 export class realm_handle;
 
-struct compile_module_options : js::optional_constructible {
-		using js::optional_constructible::optional_constructible;
-		std::optional<js::iv8::source_origin> origin;
-
-		constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"origin">, &compile_module_options::origin},
-		};
-};
-
-struct create_capability_options {
-		std::u16string origin;
-
-		GCC_ABI_TAG constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"origin">, &create_capability_options::origin},
-		};
-};
-
-struct module_handle_link_record {
-		std::vector<js::tagged_external<module_handle>> modules;
-		std::vector<unsigned> payload;
-
-		constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"modules">, &module_handle_link_record::modules},
-			js::struct_member{util::cw<"payload">, &module_handle_link_record::payload},
-		};
-};
+// NOTE: The full definitions of these option structs live in
+// "module_options.h" and are #included in the module purview of the
+// implementation units (module.cc / agent.cc / realm.cc). They carry
+// std::optional<js::iv8::source_origin> and js::struct_template reflection
+// members; defining them HERE (in this interface partition) forces clang 22
+// to serialize those std::optional / std::tuple specializations into this
+// partition's BMI, which crashes clang 22's ASTWriter (llvm #165348 family).
+// Only by-value parameter *declarations* below need these names, and a
+// by-value parameter in a declaration accepts an incomplete type, so a
+// forward declaration is sufficient in the interface.
+struct compile_module_options;
+struct create_capability_options;
+struct module_handle_link_record;
 
 struct remote_module_link_record {
 		std::vector<js::iv8::shared_remote<v8::Module>> modules;

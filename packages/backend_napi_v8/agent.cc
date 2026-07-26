@@ -1,9 +1,15 @@
 module backend_napi_v8;
 import :agent;
 import :realm;
+import :module_;
 import :utility;
+import auto_js;
 import std;
 import util;
+import v8_js;
+
+// Full definition of compile_module_options (forward-declared in :module_).
+#include "module_options.h"
 
 namespace backend_napi_v8 {
 
