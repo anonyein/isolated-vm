@@ -489,6 +489,7 @@ jobs:
             -DV8_SHARED_LIBS=javet \
             -DV8_TRICKSHOT= \
             -DCMAKE_CXX_STDLIB_MODULES_JSON="${STDLIB_MODULES_JSON}" \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
             -DIVM_INSTALL=artifacts
 
       - name: Build
