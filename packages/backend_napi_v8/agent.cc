@@ -1,5 +1,4 @@
 module backend_napi_v8;
-import :agent;
 import :realm;
 import :module_;
 import auto_js;
@@ -18,6 +17,7 @@ import v8_js;
 #include "module_handle.h"
 #include "realm_handle.h"
 #include "script_handle.h"
+#include "agent_handle_value.h"
 
 namespace backend_napi_v8 {
 

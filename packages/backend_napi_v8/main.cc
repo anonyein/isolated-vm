@@ -10,7 +10,9 @@ module;
 // it as a non-module TU instead would attach module_handle to the global module
 // and mismatch the module-attached member symbols the other units define.
 module backend_napi_v8;
-import :agent;
+// NB: NOT `import :agent;` -- agent_handle_value's full definition comes from
+// "agent_handle_value.h" below; importing the :agent partition would bring in
+// only its forward declaration and shadow the complete type.
 import :agent_handle;
 import :environment;
 import :module_;
@@ -32,6 +34,7 @@ import v8_js;
 #include "realm_handle.h"
 #include "script_handle.h"
 #include "native_module_handle.h"
+#include "agent_handle_value.h"
 
 namespace backend_napi_v8 {
 
