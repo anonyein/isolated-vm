@@ -92,7 +92,7 @@ auto value_for_record::has(local_of<primitive_tag> key) const -> bool {
 }
 
 auto value_for_record::into_range() const -> range_type {
-	return std::views::transform(keys(), iterator_transform{*this});
+	return range_type{keys(), iterator_transform{*this}};
 }
 
 auto value_for_record::size() const -> std::size_t {
