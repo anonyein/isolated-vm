@@ -77,7 +77,7 @@ struct visit_struct_properties<Meta, Type, js::struct_template<Property...>> {
 					return {util::elide{
 						util::constructor<visit_object_property<Meta, Property...[ indices ]>>,
 						transfer,
-						std::get<indices>(descriptor_type::properties)
+						std::get<indices>(descriptor_type::properties.as_tuple())
 					}...};
 				}()} {}
 

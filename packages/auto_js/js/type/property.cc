@@ -189,12 +189,19 @@ struct struct_constant
 };
 
 // Struct template holder
+// nb: This *composes* a std::tuple rather than deriving from it. Deriving from
+// std::tuple<Properties...> made clang 23 segfault while instantiating the
+// derived class definition when cross-compiling for Android (property.cc:193 in
+// the crash stack, via std::tuple's own instantiation, llvm #161215 family).
+// Composition keeps the same public surface (as_tuple() + CTAD) without deriving
+// from std::tuple, sidestepping that instantiation path.
 export template <class... Properties>
-struct struct_template : std::tuple<Properties...> {
+struct struct_template {
+		std::tuple<Properties...> tuple_;
 		explicit constexpr struct_template(Properties... properties) :
-				std::tuple<Properties...>{std::move(properties)...} {}
+				tuple_{std::move(properties)...} {}
 		// nb: Allows structured binding of the underlying `std::tuple<...>`
-		constexpr auto as_tuple() const -> const std::tuple<Properties...>& { return *this; }
+		constexpr auto as_tuple() const -> const std::tuple<Properties...>& { return tuple_; }
 		constexpr static auto is_struct_template = true;
 };
 
