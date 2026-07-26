@@ -43,7 +43,13 @@ env:
   # such as is_trivially_move_constructible<source_origin> out of a dependency
   # BMI. Reduced BMI keeps those specializations out of the BMI so importers
   # re-instantiate them locally instead.
-  LLVM_VERSION: "22.1.0"
+  #
+  # Bumped to 23 (apt.llvm.org trunk channel): clang 22.1.x still segfaults in
+  # ASTWriter::GenerateNameLookupTable / ASTDeclContextNameLookupTrait::
+  # getLookupVisibility while emitting the module_/reference interface BMIs
+  # (llvm #161215, still open on the 22.x release branch). The trunk snapshot
+  # carries the latest serialization fixes; try it to get past the crash.
+  LLVM_VERSION: "23.0.0"
   # NDK that provides the Android sysroot / libc++_shared. libc++ is 18.x here;
   # ABI-stable against the LLVM_VERSION headers we compile with.
   ANDROID_NDK_VERSION: r27c
