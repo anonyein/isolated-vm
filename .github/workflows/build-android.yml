@@ -111,6 +111,29 @@ jobs:
           echo "LLVM_DIR=$LLVM_DIR" >> "$GITHUB_ENV"
           "$LLVM_DIR/bin/clang++" --version
 
+          # Locate the bundled libc++ headers. The LLVM-*-Linux-X64 tarball may
+          # place them at include/c++/v1 or include/<triple>/c++/v1. We must feed
+          # this exact dir via -isystem (with -nostdinc++) since we cross-compile
+          # to Android and cannot rely on clang's default libc++ search. Pick the
+          # dir that actually contains the <version> header, and require that a
+          # probe including it defines _LIBCPP_VERSION (this is exactly what CMake
+          # checks during enable_language(CXX); if it fails there, import std is
+          # declared unsupported).
+          LIBCXX_INC=""
+          for cand in \
+            "$LLVM_DIR/include/c++/v1" \
+            "$LLVM_DIR"/include/*/c++/v1; do
+            if [ -f "$cand/version" ] || [ -f "$cand/__config" ]; then
+              LIBCXX_INC="$cand"; break
+            fi
+          done
+          test -n "$LIBCXX_INC" || { echo "ERROR: no bundled libc++ headers in LLVM tarball" >&2; find "$LLVM_DIR/include" -maxdepth 3 -name version -o -name __config 2>/dev/null; exit 1; }
+          echo "libc++ headers: $LIBCXX_INC"
+          printf '#include <version>\n#ifndef _LIBCPP_VERSION\n#error not libc++\n#endif\nint main(){return 0;}\n' > /tmp/libcxx_probe.cc
+          "$LLVM_DIR/bin/clang++" -nostdinc++ -isystem "$LIBCXX_INC" \
+            --target=x86_64-unknown-linux-gnu -std=c++26 -fsyntax-only /tmp/libcxx_probe.cc
+          echo "LIBCXX_INC=$LIBCXX_INC" >> "$GITHUB_ENV"
+
       - name: Setup Android NDK
         run: |
           set -eux
@@ -305,7 +328,7 @@ jobs:
           #   configuration matches the runtime.
           # -fno-modules-reduced-bmi: force full BMI (harmless; avoids the reduced-BMI
           #   lazy-specialization ASTReader crash). LLVM 22 supports it.
-          set(_libcxx "-nostdinc++ -isystem \${_llvm}/include/c++/v1")
+          set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_INC}")
           set(_libcxx_abi "-D_LIBCPP_ABI_NAMESPACE=__ndk1 -D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE")
           set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} -fno-modules-reduced-bmi")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
