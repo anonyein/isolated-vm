@@ -36,9 +36,16 @@ consteval auto consteval_strcat(constant_wrapper<Strings>... /*strings*/) {
 		})()));
 		return chars;
 	}();
-	auto [... indices ] = sequence<chars.size()>;
-	constexpr char_type string[ chars.size() ] = {chars[ indices ]...};
-	return cw<string>;
+	// nb: Expand into the C array via an index_sequence template parameter pack
+	// rather than a structured-binding pack (`auto [...indices] = sequence<N>`).
+	// clang's new constant interpreter (-fexperimental-new-constant-interpreter)
+	// does not treat the structured-binding pack as a constant expression here,
+	// but a plain index_sequence pack expands fine. The result stays a C array so
+	// `cw<string>`'s value_type keeps its array extent (used by callers above).
+	return [ & ]<std::size_t... Index>(std::index_sequence<Index...> /*indices*/) constexpr {
+		constexpr char_type string[ chars.size() ] = {chars[ Index ]...};
+		return cw<string>;
+	}(std::make_index_sequence<chars.size()>{});
 }
 // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay, cppcoreguidelines-pro-bounds-pointer-arithmetic, modernize-avoid-c-arrays)
 
