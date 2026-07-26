@@ -34,7 +34,15 @@ struct forward : util::pointer_facade {
 		explicit forward(std::convertible_to<Type> auto&& value, Tag /*tag*/ = {}) :
 				value_{std::forward<decltype(value)>(value)} {}
 
-		constexpr auto operator*(this auto&& self) -> auto&& { return std::forward<decltype(self)>(self).value_; }
+		// nb: Written as classic ref-qualified overloads rather than a single
+		// deducing-this (`this auto&& self`) member. clang 23 recurses without
+		// bound while instantiating the deducing-this form inside the transfer
+		// system when cross-compiling for Android, aborting via
+		// StackExhaustionHandler (llvm #161215 family). The explicit overloads
+		// give clang a finite, non-recursive instantiation path.
+		constexpr auto operator*() & -> Type& { return value_; }
+		constexpr auto operator*() const& -> const Type& { return value_; }
+		constexpr auto operator*() && -> Type&& { return std::move(value_); }
 
 	private:
 		Type value_;
