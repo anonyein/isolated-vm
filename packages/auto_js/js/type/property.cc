@@ -189,19 +189,21 @@ struct struct_constant
 };
 
 // Struct template holder
-// nb: This *composes* a std::tuple rather than deriving from it. Deriving from
-// std::tuple<Properties...> made clang 23 segfault while instantiating the
-// derived class definition when cross-compiling for Android (property.cc:193 in
-// the crash stack, via std::tuple's own instantiation, llvm #161215 family).
-// Composition keeps the same public surface (as_tuple() + CTAD) without deriving
-// from std::tuple, sidestepping that instantiation path.
+// nb: This stores a `util::flat_tuple` rather than a `std::tuple`. Deriving from
+// or composing libc++'s std::tuple<Properties...> made clang 23 segfault while
+// instantiating the specialization when cross-compiling for Android (crash stack
+// bottoms out in libc++ tuple:555, llvm #161215 family). util::flat_tuple is a
+// std::tuple replacement built from private inheritance + a friend get(); it does
+// not instantiate libc++'s std::tuple template, sidestepping that crash path.
+// It provides the tuple protocol (tuple_size/tuple_element/get) so the same
+// public surface -- as_tuple() + structured bindings -- keeps working.
 export template <class... Properties>
 struct struct_template {
-		std::tuple<Properties...> tuple_;
+		util::flat_tuple<Properties...> tuple_;
 		explicit constexpr struct_template(Properties... properties) :
 				tuple_{std::move(properties)...} {}
-		// nb: Allows structured binding of the underlying `std::tuple<...>`
-		constexpr auto as_tuple() const -> const std::tuple<Properties...>& { return tuple_; }
+		// nb: Allows structured binding of the underlying tuple.
+		constexpr auto as_tuple() const -> const util::flat_tuple<Properties...>& { return tuple_; }
 		constexpr static auto is_struct_template = true;
 };
 

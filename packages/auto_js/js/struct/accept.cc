@@ -67,7 +67,7 @@ struct accept_struct_properties<Meta, Type, js::struct_template<Property...>> {
 					return {util::elide{
 						util::constructor<accept_object_property<Meta, Property...[ indices ]>>,
 						transfer,
-						std::get<indices>(descriptor_type::properties.as_tuple())
+						util::get<indices>(descriptor_type::properties.as_tuple())
 					}...};
 				}()} {}
 

@@ -86,4 +86,24 @@ constexpr auto get(const flat_tuple<Types...>& tuple) -> const auto& {
 	return flat_tuple_get(std::integral_constant<std::size_t, Index>{}, tuple);
 }
 
+// Element type helper for the tuple protocol below.
+template <std::size_t Index, class... Types>
+struct flat_tuple_element_type;
+
+template <class Type0, class... Types>
+struct flat_tuple_element_type<0, Type0, Types...> : std::type_identity<Type0> {};
+
+template <std::size_t Index, class Type0, class... Types>
+struct flat_tuple_element_type<Index, Type0, Types...> : flat_tuple_element_type<Index - 1, Types...> {};
+
 } // namespace util
+
+// Tuple protocol so `flat_tuple` supports structured bindings
+// (`const auto [... xs] = ft;`) without instantiating libc++'s std::tuple,
+// whose instantiation crashes clang 23 when cross-compiling for Android
+// (llvm #161215 family). util::get is found by ADL for the binding's `get<I>`.
+template <class... Types>
+struct std::tuple_size<util::flat_tuple<Types...>> : std::integral_constant<std::size_t, sizeof...(Types)> {};
+
+template <std::size_t Index, class... Types>
+struct std::tuple_element<Index, util::flat_tuple<Types...>> : util::flat_tuple_element_type<Index, Types...> {};
