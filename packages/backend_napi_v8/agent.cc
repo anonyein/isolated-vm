@@ -3,6 +3,7 @@ import :agent;
 import :realm;
 import :module_;
 import auto_js;
+import napi_js;
 import std;
 import util;
 import v8_js;
@@ -12,6 +13,9 @@ import v8_js;
 // clang 22 ASTWriter BMI crash, llvm #165348 family).
 #include "module_options.h"
 #include "completion_record.h"
+// module_handle was the exported class of :module_; now a plain header (avoids
+// the clang 23 ASTWriter::GenerateNameLookupTable crash on Android).
+#include "module_handle.h"
 
 namespace backend_napi_v8 {
 

@@ -16,6 +16,8 @@ import v8_js;
 #include "module_options.h"
 #include "completion_record.h"
 #include "subscriber_capability.h"
+// module_handle was the exported class of :module_; now a plain header.
+#include "module_handle.h"
 
 namespace backend_napi_v8 {
 

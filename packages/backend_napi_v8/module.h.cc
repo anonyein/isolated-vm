@@ -9,8 +9,17 @@ import util;
 import v8_js;
 
 namespace backend_napi_v8 {
-export class module_handle;
 export class realm_handle;
+
+// module_handle's full definition lives in "module_handle.h" (included in the
+// module purview of the implementation units module.cc / agent.cc /
+// native_module.cc / realm.cc). Defining it HERE, in this interface partition,
+// makes clang serialize its visible-name lookup table into this partition's
+// BMI, which crashes clang 23's ASTWriter::GenerateNameLookupTable /
+// getLookupVisibility (infinite redecl-chain recursion, llvm #161215) when
+// cross-compiling for Android. No other interface partition names module_handle
+// (agent.h.cc / realm.h.cc only need the option forward-declarations below), so
+// it does not need to be an exported entity of this partition.
 
 // NOTE: The full definitions of these option structs live in
 // "module_options.h" and are #included in the module purview of the
@@ -37,23 +46,7 @@ struct remote_module_link_record;
 // serialized into this interface partition's BMI.
 class subscriber_capability;
 
-export class module_handle {
-	public:
-		using transfer_type = js::tagged_external<module_handle>;
-		module_handle(agent_handle agent, js::iv8::shared_remote<v8::Module> module);
-
-		auto agent() -> agent_handle& { return agent_; }
-
-		auto evaluate(environment& env, realm_handle* realm) -> forward_promise_type;
-		auto link(environment& env, realm_handle* realm, module_handle_link_record link_record) -> forward_promise_type;
-		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<module_handle>>;
-		static auto compile(environment& env, agent_handle& agent, js::string_t source_text, compile_module_options options) -> forward_promise_type;
-		static auto create_capability(environment& env, realm_handle& realm, js::napi::local_of<js::function_tag> make_capability, create_capability_options options) -> forward_promise_type;
-
-	private:
-		agent_handle agent_;
-		js::iv8::shared_remote<v8::Module> module_;
-};
+// module_handle's full definition lives in "module_handle.h" (see above).
 
 // subscriber_capability's full definition (with its util::lockable<
 // move_only_function<...>> member, whose std::unique_ptr specialization crashes

@@ -15,6 +15,7 @@ import v8_js;
 // reference_handle was the :reference interface partition; converted to a plain
 // header to avoid the clang 23 ASTWriter::GenerateNameLookupTable crash.
 #include "reference_handle.h"
+#include "module_handle.h"
 
 namespace backend_napi_v8 {
 

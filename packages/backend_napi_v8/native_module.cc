@@ -4,11 +4,21 @@ module;
 #endif
 #include <cassert>
 module backend_napi_v8;
+import :agent_handle;
+import :environment;
 import :lock;
 import :module_;
 import :native_module;
+import auto_js;
 import isolated_vm;
+import napi_js;
+import std;
+import util;
 import v8_js;
+
+// module_handle: was the exported class of :module_, now a plain header (avoids
+// the clang 23 ASTWriter::GenerateNameLookupTable crash on Android cross-compile).
+#include "module_handle.h"
 
 namespace backend_napi_v8 {
 
