@@ -295,25 +295,34 @@ jobs:
         id: import_std
         run: |
           set -eux
-          # Confirm LLVM 22 ships its own libc++.modules.json where CMake's bare
-          # (-print-file-name, no --target) probe will find it.
-          RESOLVED="$("${LLVM_DIR}/bin/clang++" -print-file-name=libc++.modules.json)"
-          echo "clang (bare) resolves libc++.modules.json -> ${RESOLVED}"
-          if [ ! -f "${RESOLVED}" ]; then
-            echo "ERROR: standalone LLVM did not ship a host libc++.modules.json" >&2
-            exit 1
-          fi
-          echo "--- libc++.modules.json content ---"
-          cat "${RESOLVED}"
-          echo "--- resolve std.cppm referenced by json ---"
-          JSON_DIR="$(dirname "${RESOLVED}")"
-          # modules.json "source-path" is relative to the json's directory.
-          SRC_REL="$(grep -oE '"source-path"[^,]*' "${RESOLVED}" | head -n1 | sed -E 's/.*:\s*"([^"]+)".*/\1/')"
-          echo "source-path (relative) = ${SRC_REL}"
-          echo "resolves to = ${JSON_DIR}/${SRC_REL}"
-          ls -l "${JSON_DIR}/${SRC_REL}" || { echo "ERROR: std.cppm referenced by modules.json is missing (Debian libc++ may not ship module sources)" >&2; find /usr/lib/llvm-22 -name 'std.cppm' 2>/dev/null; exit 1; }
-          echo "Using bundled std module manifest: ${RESOLVED}"
-          echo "json=${RESOLVED}" >> "$GITHUB_OUTPUT"
+          # Debian's libc++.modules.json (apt.llvm.org) uses RELATIVE source-paths
+          # ("../share/libc++/v1/std.cppm") interpreted from the json's own dir. But
+          # clang's -print-file-name returns the json at /lib/x86_64-linux-gnu/, where
+          # ../share/... does NOT exist -- the real sources live under
+          # /usr/lib/llvm-22/share/libc++/v1/. So CMake's default probe finds a json
+          # whose std.cppm path is broken ("No SOURCES given to __cmake_cxx_std_26").
+          # Fix: locate the actual std.cppm, then emit a corrected json with ABSOLUTE
+          # source-paths and hand it to CMake via CMAKE_CXX_STDLIB_MODULES_JSON (the
+          # same knob the upstream macOS build uses via ECO_STD).
+          STD_CPPM="$(find /usr/lib/llvm-22 -name 'std.cppm' 2>/dev/null | head -n1)"
+          test -n "$STD_CPPM" || { echo "ERROR: std.cppm not found under /usr/lib/llvm-22" >&2; exit 1; }
+          STD_DIR="$(dirname "$STD_CPPM")"
+          echo "std module sources dir: ${STD_DIR}"
+          ls -l "${STD_DIR}"
+          ORIG_JSON="$("${LLVM_DIR}/bin/clang++" -print-file-name=libc++.modules.json)"
+          test -f "$ORIG_JSON" || { echo "ERROR: no libc++.modules.json" >&2; exit 1; }
+          echo "--- original modules.json ---"; cat "$ORIG_JSON"
+          # Rewrite every "../..." source-path to an absolute path under STD_DIR.
+          FIXED_JSON=/tmp/libcxx.modules.json
+          sed -E "s#\"source-path\"[[:space:]]*:[[:space:]]*\"[^\"]*/([^/\"]+\.cppm)\"#\"source-path\": \"${STD_DIR}/\\1\"#g" \
+            "$ORIG_JSON" > "$FIXED_JSON"
+          echo "--- fixed modules.json ---"; cat "$FIXED_JSON"
+          # Sanity: every referenced source must now exist.
+          for f in $(grep -oE '"source-path"[^,]*' "$FIXED_JSON" | sed -E 's/.*"([^"]+)".*/\1/'); do
+            test -f "$f" || { echo "ERROR: referenced module source missing: $f" >&2; exit 1; }
+          done
+          echo "STDLIB_MODULES_JSON=${FIXED_JSON}" >> "$GITHUB_ENV"
+          echo "json=${FIXED_JSON}" >> "$GITHUB_OUTPUT"
 
       # Custom toolchain: standalone clang as compiler, NDK as sysroot only.
       - name: Write Android toolchain file
@@ -479,6 +488,7 @@ jobs:
             -DV8_INCLUDE_GN_FILE="${NODE_INC}/v8-gn.h" \
             -DV8_SHARED_LIBS=javet \
             -DV8_TRICKSHOT= \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON="${STDLIB_MODULES_JSON}" \
             -DIVM_INSTALL=artifacts
 
       - name: Build
