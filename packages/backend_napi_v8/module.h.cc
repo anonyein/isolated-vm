@@ -31,6 +31,10 @@ struct module_handle_link_record;
 // specialization out of this interface partition's BMI.
 struct remote_module_link_record;
 
+// subscriber_capability's full definition lives in "subscriber_capability.h"
+// (included only in module.cc). It holds util::lockable<move_only_function<...>>
+// whose std::unique_ptr specialization crashes clang 22's ASTWriter if
+// serialized into this interface partition's BMI.
 class subscriber_capability;
 
 export class module_handle {
@@ -51,38 +55,10 @@ export class module_handle {
 		js::iv8::shared_remote<v8::Module> module_;
 };
 
-class subscriber_capability {
-	private:
-		struct private_constructor {
-				explicit private_constructor() = default;
-		};
-
-	public:
-		using callback_type = util::move_only_function<auto(js::value_t) const->bool>;
-		using transfer_type = js::tagged_external<subscriber_capability>;
-		class subscriber;
-
-		explicit subscriber_capability(private_constructor /*private*/) {};
-		auto accept_callback(callback_type callback) -> void;
-		auto take_subscriber() -> std::shared_ptr<subscriber>;
-		auto send(environment& env, js::forward<napi::local_of<>> message_local) -> bool;
-		static auto make(environment& env) -> js::napi::local_of<js::object_tag>;
-
-		static auto class_template(environment& env) -> js::napi::local_of<js::class_tag_of<subscriber_capability>>;
-
-	private:
-		util::lockable<callback_type> callback_;
-		std::shared_ptr<subscriber> subscriber_;
-};
-
-class subscriber_capability::subscriber {
-	public:
-		explicit subscriber(const std::shared_ptr<subscriber_capability>& capability);
-		auto subscribe(callback_type callback) -> void;
-
-	private:
-		std::weak_ptr<subscriber_capability> capability_;
-		bool subscribed_ = false;
-};
+// subscriber_capability's full definition (with its util::lockable<
+// move_only_function<...>> member, whose std::unique_ptr specialization crashes
+// clang 22's ASTWriter when serialized into this interface BMI) lives in
+// "subscriber_capability.h", #included in module.cc's module purview. Only a
+// forward declaration is needed here (see above).
 
 } // namespace backend_napi_v8

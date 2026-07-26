@@ -15,6 +15,7 @@ import v8_js;
 // does not trip the clang 22 ASTWriter crash.
 #include "module_options.h"
 #include "completion_record.h"
+#include "subscriber_capability.h"
 
 namespace backend_napi_v8 {
 
