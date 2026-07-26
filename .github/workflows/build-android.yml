@@ -360,7 +360,15 @@ jobs:
           # -fno-modules-reduced-bmi: force full BMI (harmless; avoids the reduced-BMI
           #   lazy-specialization ASTReader crash). LLVM 22 supports it.
           set(_libcxx "-nostdinc++ -isystem \$ENV{LIBCXX_SITE} -isystem \$ENV{LIBCXX_INC}")
-          set(_libcxx_abi "-D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE")
+          # -D__BIONIC_CTYPE_INLINE=inline: the C library headers (<ctype.h> etc.)
+          # ALWAYS come from the NDK bionic sysroot, regardless of which libc++
+          # headers we use. bionic defines isalnum/isalpha/... as `static __inline`
+          # (internal linkage) by default; libc++'s std module does
+          # `export using std::isalnum;`, and C++ forbids exporting internal-linkage
+          # entities, so the std module fails. bionic gates this on
+          # __BIONIC_CTYPE_INLINE and supports overriding it; `inline` gives external
+          # linkage (C++ inline semantics), making them exportable.
+          set(_libcxx_abi "-D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HAS_NO_TIME_ZONE_DATABASE -D_LIBCPP_PSTL_CPU_BACKEND_THREAD -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -D__BIONIC_CTYPE_INLINE=inline")
           # -Wno-unused-command-line-argument: with -nostdinc++ we take over the
           # libc++ header search manually, so -stdlib=libc++ is unused for pure
           # module (.cppm) compiles and -Werror would otherwise reject it. We keep
