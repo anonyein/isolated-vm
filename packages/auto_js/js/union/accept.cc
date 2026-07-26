@@ -57,8 +57,13 @@ struct accept<Meta, std::variant<Types...>> {
 			return util::sealed_map{
 				std::in_place,
 				[ = ]() constexpr -> auto {
+					// nb: ADL `get` so this works whether `alternatives` is a
+					// std::tuple or a util::flat_tuple (the latter avoids the
+					// libc++ std::tuple instantiation that crashes clang on Android).
+					using std::get;
+					using util::get;
 					// NOLINTNEXTLINE(modernize-type-traits)
-					const auto& alternative = std::get<indices>(descriptor_type::alternatives);
+					const auto& alternative = get<indices>(descriptor_type::alternatives);
 					return std::pair{util::fnv1a_hash(std::basic_string_view{alternative.discriminant}), &accept_alternative<indices, Visit, Value>};
 				}()...,
 			};

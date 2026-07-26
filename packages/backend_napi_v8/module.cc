@@ -32,7 +32,13 @@ auto module_handle::compile(
 	js::string_t source_text,
 	compile_module_options options
 ) -> forward_promise_type {
-	using value_type = std::tuple<module_handle, std::optional<std::u16string>, std::vector<js::iv8::module_request>>;
+	// nb: util::flat_tuple (not std::tuple) here: this type is wrapped in
+	// std::expected below, and clang 23 segfaults while instantiating libc++'s
+	// std::tuple<...> for the expected payload's tail-padding analysis when
+	// cross-compiling for Android (crash stack bottoms out in tuple:555, llvm
+	// #161215 family). flat_tuple provides structured bindings without
+	// instantiating libc++'s std::tuple.
+	using value_type = util::flat_tuple<module_handle, std::optional<std::u16string>, std::vector<js::iv8::module_request>>;
 	using expected_type = std::expected<value_type, js::error_value>;
 	auto [ promise, resolver ] = make_promise(
 		env,
@@ -64,7 +70,7 @@ auto module_handle::compile(
 					auto shared_module = make_shared_remote(lock, module_record);
 					auto requests = js::iv8::module_record::requests(lock, module_record);
 					auto module_ = module_handle{std::move(agent), shared_module};
-					return std::tuple{std::move(module_), std::move(specifier), std::move(requests)};
+					return util::flat_tuple{std::move(module_), std::move(specifier), std::move(requests)};
 				});
 			});
 			resolver(std::move(maybe_module_data));
