@@ -1,0 +1,197 @@
+name: isolated-vm Android Cross Build
+
+# Cross-compiles isolated-vm into an Android .node addon and links it directly
+# against the prebuilt Javet Node runtime shared library that already lives in
+# the repo (libs/<abi>/libjavet-node-android-i18n.v.5.0.10.so). That .so exports
+# the full V8/Node C++ symbols (verified: 1608 v8::* / 5948 node::* mangled
+# symbols) plus the N-API C ABI, so it can serve as the link target. Node.js
+# 24.18.0 headers are fetched via node-gyp; the build uses the Android NDK
+# clang++/libc++ toolchain to stay ABI-compatible with the .so (NDK libc++,
+# __ndk1 namespace).
+
+on:
+  push:
+    tags: ['*']
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: 'Node.js version (headers) for the Android build'
+        required: false
+        default: '24.18.0'
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: ${{ github.event.inputs.node_version || '24.18.0' }}
+  NDK_VERSION: r27d
+  ANDROID_API: '24'
+  # Basename of the Javet Node runtime .so bundled under libs/<abi>/
+  JAVET_SO: libjavet-node-android-i18n.v.5.0.10.so
+  # The two .so files exceed GitHub's 100MB file limit, so they ship zipped
+  # (libs/<abi>/<so> layout inside) and are extracted at build time.
+  JAVET_SO_ZIP: libjavet-node-android-i18n.v.5.0.10.zip
+
+jobs:
+  cross-build:
+    name: isolated-vm .node for ${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            abi: arm64-v8a
+            triple: aarch64-linux-android
+            gyp_arch: arm64
+            prebuild_dir: android-arm64
+          - arch: x86_64
+            abi: x86_64
+            triple: x86_64-linux-android
+            gyp_arch: x64
+            prebuild_dir: android-x64
+    steps:
+      - name: Checkout isolated-vm source
+        uses: actions/checkout@v6
+
+      - name: Extract bundled Javet .so
+        run: |
+          set -eux
+          test -f "${{ env.JAVET_SO_ZIP }}"
+          unzip -o "${{ env.JAVET_SO_ZIP }}"
+          test -f "libs/${{ matrix.abi }}/${{ env.JAVET_SO }}"
+          ls -lh "libs/${{ matrix.abi }}/${{ env.JAVET_SO }}"
+
+      - name: Setup Node.js (host, drives node-gyp)
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install node-gyp
+        run: npm install --global node-gyp@latest
+
+      - name: Setup Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          local-cache: false
+
+      - name: Fetch Node.js headers (${{ env.NODE_VERSION }})
+        run: |
+          set -eux
+          node-gyp install ${{ env.NODE_VERSION }}
+
+      - name: Patch binding.gyp for Android link target
+        env:
+          IV_ANDROID_ABI: ${{ matrix.abi }}
+          IV_ANDROID_SO: ${{ env.JAVET_SO }}
+        run: |
+          python3 .github/workflows/_patch-binding-android.py
+
+      - name: Cross-compile & link isolated_vm.node
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+          TRIPLE: ${{ matrix.triple }}
+          API: ${{ env.ANDROID_API }}
+          GYP_ARCH: ${{ matrix.gyp_arch }}
+        run: |
+          set -eux
+          HOST_TAG=linux-x86_64
+          TOOL="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin"
+          SYSROOT="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot"
+
+          # NDK clang wrappers that bake in the target triple + API level.
+          export CC="$TOOL/${TRIPLE}${API}-clang"
+          export CXX="$TOOL/${TRIPLE}${API}-clang++"
+          export AR="$TOOL/llvm-ar"
+          export RANLIB="$TOOL/llvm-ranlib"
+          export STRIP="$TOOL/llvm-strip"
+          export LINK="$CXX"
+
+          # node-gyp passes these straight through to the generated Makefile.
+          export CFLAGS="--sysroot=$SYSROOT -fPIC"
+          export CXXFLAGS="--sysroot=$SYSROOT -fPIC"
+          export LDFLAGS="--sysroot=$SYSROOT"
+
+          node-gyp configure \
+            --nodedir="$HOME/.cache/node-gyp/${NODE_VERSION}" \
+            --arch="$GYP_ARCH"
+
+          # Force the generated build to use the NDK toolchain rather than host gcc.
+          node-gyp build \
+            --release \
+            CC.target="$CC" \
+            CXX.target="$CXX" \
+            CC.host="$CC" \
+            CXX.host="$CXX" \
+            LINK.target="$CXX" \
+            AR.target="$AR"
+
+      - name: Collect .node
+        run: |
+          set -eux
+          out="prebuilds/${{ matrix.prebuild_dir }}"
+          mkdir -p "$out"
+          node_file="$(find build -name 'isolated_vm.node' | head -n1)"
+          test -n "$node_file"
+          cp -v "$node_file" "$out/"
+          # Verify the addon is an Android ELF for the expected arch.
+          file "$out/isolated_vm.node"
+          ls -lh "$out"
+
+      - name: Zip per-abi
+        run: |
+          set -eux
+          zip -r "isolated-vm-android-${{ matrix.abi }}-${{ env.NODE_VERSION }}.zip" \
+            "prebuilds/${{ matrix.prebuild_dir }}"
+
+      - name: Upload per-abi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: isolated-vm-android-${{ matrix.abi }}
+          path: isolated-vm-android-${{ matrix.abi }}-${{ env.NODE_VERSION }}.zip
+
+  pack:
+    name: Bundle + Release
+    needs: cross-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download per-abi artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: isolated-vm-android-*
+          path: incoming
+
+      - name: Merge into prebuilds layout
+        run: |
+          set -eux
+          mkdir -p prebuilds
+          for z in $(find incoming -name '*.zip'); do
+            unzip -o "$z" -d merged
+          done
+          cp -a merged/prebuilds/. prebuilds/
+          find prebuilds -type f -name '*.node' -print
+
+      - name: Build merged zip
+        run: |
+          set -eux
+          zip -r "isolated-vm-prebuilds-android-${{ env.NODE_VERSION }}.zip" prebuilds
+          ls -lh isolated-vm-prebuilds-android-*.zip
+
+      - name: Upload merged artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: isolated-vm-prebuilds-android
+          path: isolated-vm-prebuilds-android-${{ env.NODE_VERSION }}.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: isolated-vm-prebuilds-android-*.zip
