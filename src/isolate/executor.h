@@ -29,6 +29,30 @@ class Executor { // "En taro adun"
 		static auto IsDefaultThread() -> bool;
 		static auto MayRunInlineTasks(IsolateEnvironment& env) -> bool;
 
+		// Global (non-thread-local) lookup of a node isolate's Executor by v8::Isolate*. This is used
+		// to recover the current environment on foreign threads (e.g. a host embedder like Javet which
+		// may invoke synchronous ivm APIs from a thread pool rather than the thread that loaded the
+		// module). See `RecoverScope`.
+		static void RegisterNodeExecutor(v8::Isolate* isolate, Executor* executor);
+		static void UnregisterNodeExecutor(v8::Isolate* isolate);
+		static auto LookupNodeExecutor(v8::Isolate* isolate) -> Executor*;
+
+		// RAII helper which ensures `current_executor` is set for the duration of a synchronous native
+		// entry point. If `current_executor` is already set this is a no-op. Otherwise it looks up the
+		// node executor for `v8::Isolate::GetCurrent()` and installs it as the current executor,
+		// restoring the previous value (nullptr) on destruction.
+		class RecoverScope {
+			public:
+				RecoverScope();
+				RecoverScope(const RecoverScope&) = delete;
+				~RecoverScope();
+				auto operator=(const RecoverScope&) -> RecoverScope& = delete;
+
+			private:
+				Executor* last;
+				bool recovered;
+		};
+
 	private:
 		class CpuTimer {
 			public:

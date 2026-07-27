@@ -15,6 +15,10 @@ inline void RunCallback(T& info, F fn) {
 	// This function is used when C++ code is invoked from a JS callback. We are given an instance of
 	// `FunctionCallbackInfo`, or `PropertyCallbackInfo` which is used to give the return value to v8.
 	// C++ exceptions will be caught, converted to JS exceptions, and then thrown back to JS.
+	// Ensure the thread-local current environment is set. On the node thread this is a no-op; on a
+	// foreign thread (e.g. a host embedder thread pool that drives the node isolate) this recovers
+	// the environment from `v8::Isolate::GetCurrent()`.
+	Executor::RecoverScope recover_scope;
 	try {
 		v8::Local<v8::Value> result = fn();
 		if (result.IsEmpty()) {

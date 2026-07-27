@@ -1,11 +1,13 @@
 #include "executor.h"
 #include "environment.h"
 #include "isolate/util.h"
+#include "lib/lockable.h"
 #include "lib/timer.h"
 #include "v8-profiler.h"
 #include "v8.h"
 #include <cstddef>
 #include <cstdio>
+#include <unordered_map>
 
 namespace ivm {
 
@@ -40,6 +42,52 @@ auto Executor::MayRunInlineTasks(IsolateEnvironment& env) -> bool {
 
 thread_local Executor* Executor::current_executor = nullptr;
 thread_local Executor::CpuTimer* Executor::cpu_timer_thread = nullptr;
+
+/**
+ * Global registry mapping a node isolate's `v8::Isolate*` to its `Executor`. Used to recover the
+ * current environment when a synchronous ivm API is invoked from a thread that never set up an
+ * `Executor::Scope` (for example a host embedder thread pool). The map only ever contains node
+ * (default) isolates, which are created once per node environment and live for its whole lifetime.
+ */
+namespace {
+lockable_t<std::unordered_map<v8::Isolate*, Executor*>> node_executors;
+} // namespace
+
+void Executor::RegisterNodeExecutor(v8::Isolate* isolate, Executor* executor) {
+	node_executors.write()->insert_or_assign(isolate, executor);
+}
+
+void Executor::UnregisterNodeExecutor(v8::Isolate* isolate) {
+	node_executors.write()->erase(isolate);
+}
+
+auto Executor::LookupNodeExecutor(v8::Isolate* isolate) -> Executor* {
+	auto lock = node_executors.read();
+	auto it = lock->find(isolate);
+	return it == lock->end() ? nullptr : it->second;
+}
+
+/**
+ * RecoverScope implementation
+ */
+Executor::RecoverScope::RecoverScope() : last{current_executor}, recovered{false} {
+	if (current_executor == nullptr) {
+		auto* isolate = v8::Isolate::GetCurrent();
+		if (isolate != nullptr) {
+			auto* executor = LookupNodeExecutor(isolate);
+			if (executor != nullptr) {
+				current_executor = executor;
+				recovered = true;
+			}
+		}
+	}
+}
+
+Executor::RecoverScope::~RecoverScope() {
+	if (recovered) {
+		current_executor = last;
+	}
+}
 
 /**
  * CpuTimer implementation

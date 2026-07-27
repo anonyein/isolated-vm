@@ -354,6 +354,10 @@ IsolateEnvironment::IsolateEnvironment(UvScheduler& default_scheduler) :
 void IsolateEnvironment::IsolateCtor(Isolate* isolate, Local<Context> context) {
 	this->isolate = isolate;
 	default_context.Reset(isolate, context);
+	// Register this node (default) isolate so its environment can be recovered on foreign threads
+	// which never established an `Executor::Scope` (e.g. a host embedder thread pool). See
+	// `Executor::RecoverScope`.
+	Executor::RegisterNodeExecutor(isolate, &executor);
 }
 
 void IsolateEnvironment::IsolateCtor(size_t memory_limit_in_mb, shared_ptr<v8::BackingStore> snapshot_blob, size_t snapshot_length) {
@@ -420,6 +424,8 @@ void IsolateEnvironment::IsolateCtor(size_t memory_limit_in_mb, shared_ptr<v8::B
 
 IsolateEnvironment::~IsolateEnvironment() {
 	if (nodejs_isolate) {
+		// Stop recovering this environment on foreign threads now that it's going away.
+		Executor::UnregisterNodeExecutor(isolate);
 		// Throw away all owned isolates when the root one dies
 		auto isolates = *owned_isolates->read(); // copy
 		for (const auto& handle : isolates) {

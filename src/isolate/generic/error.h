@@ -3,6 +3,7 @@
 #include <string>
 #include <v8.h>
 #include "isolate/v8_version.h"
+#include "isolate/executor.h"
 
 namespace ivm {
 
@@ -125,6 +126,10 @@ template <class Functor>
 inline void RunBarrier(Functor fn) {
 	// Runs a function and converts C++ errors to immediate v8 errors. Pretty much the same as
 	// `RunCallback` but with no return value.
+	// Ensure the thread-local current environment is set. On the node thread this is a no-op; on a
+	// foreign thread (e.g. a host embedder thread pool that invokes ivm synchronously) this recovers
+	// the environment from `v8::Isolate::GetCurrent()`.
+	Executor::RecoverScope recover_scope;
 	try {
 		fn();
 	} catch (const FatalRuntimeError& cc_error) {
