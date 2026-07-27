@@ -27,28 +27,15 @@ class module_handle;
 struct compile_module_options : js::optional_constructible {
 		using js::optional_constructible::optional_constructible;
 		std::optional<js::iv8::source_origin> origin;
-
-		constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"origin">, &compile_module_options::origin},
-		};
 };
 
 struct create_capability_options {
 		std::u16string origin;
-
-		constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"origin">, &create_capability_options::origin},
-		};
 };
 
 struct module_handle_link_record {
 		std::vector<js::tagged_external<module_handle>> modules;
 		std::vector<unsigned> payload;
-
-		constexpr static auto struct_template = js::struct_template{
-			js::struct_member{util::cw<"modules">, &module_handle_link_record::modules},
-			js::struct_member{util::cw<"payload">, &module_handle_link_record::payload},
-		};
 };
 
 // Purely internal (never in an interface signature); carries
@@ -60,3 +47,40 @@ struct remote_module_link_record {
 };
 
 } // namespace backend_napi_v8
+
+// nb: The struct reflection is defined as an EXTERNAL js::struct_properties
+// specialization here (after the complete class definitions) rather than as an
+// in-class `constexpr static auto struct_template` member. Evaluating that
+// consteval member during the parse of the struct body (complete-class context)
+// with a pointer-to-member of a std::optional<source_origin> field crashes
+// clang here when cross-compiling for Android. Defining the reflection after the
+// class avoids that in-body consteval evaluation. See auto_js/js/struct/types.cc
+// for the struct_properties primary template.
+namespace js {
+
+template <>
+struct struct_properties<backend_napi_v8::compile_module_options> {
+		constexpr static auto defaultable = std::is_nothrow_constructible_v<backend_napi_v8::compile_module_options, std::nullopt_t>;
+		constexpr static auto properties = js::struct_template{
+			js::struct_member{util::cw<"origin">, &backend_napi_v8::compile_module_options::origin},
+		};
+};
+
+template <>
+struct struct_properties<backend_napi_v8::create_capability_options> {
+		constexpr static auto defaultable = std::is_nothrow_constructible_v<backend_napi_v8::create_capability_options, std::nullopt_t>;
+		constexpr static auto properties = js::struct_template{
+			js::struct_member{util::cw<"origin">, &backend_napi_v8::create_capability_options::origin},
+		};
+};
+
+template <>
+struct struct_properties<backend_napi_v8::module_handle_link_record> {
+		constexpr static auto defaultable = std::is_nothrow_constructible_v<backend_napi_v8::module_handle_link_record, std::nullopt_t>;
+		constexpr static auto properties = js::struct_template{
+			js::struct_member{util::cw<"modules">, &backend_napi_v8::module_handle_link_record::modules},
+			js::struct_member{util::cw<"payload">, &backend_napi_v8::module_handle_link_record::payload},
+		};
+};
+
+} // namespace js
