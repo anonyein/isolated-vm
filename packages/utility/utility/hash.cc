@@ -20,7 +20,7 @@ constexpr auto fnv1a_hash(std::basic_string_view<Char> view) -> std::uint32_t {
 
 // constexpr `typeid(Type).hash_code()` replacement
 template <class Type>
-consteval auto make_type_hash() -> std::uint32_t {
+constexpr auto make_type_hash() -> std::uint32_t {
 	// "std::uint32_t make_type_hash() [Type = int]"
 	constexpr auto name = std::source_location::current().function_name();
 	return fnv1a_hash(std::string_view{name});

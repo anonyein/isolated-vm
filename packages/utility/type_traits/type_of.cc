@@ -35,26 +35,26 @@ namespace util {
 // `type_of`
 template <class Hidden>
 struct type_of : std::type_identity<typename Hidden::type> {
-		consteval type_of() = default;
+		constexpr type_of() = default;
 
 		template <class Type>
 			requires std::is_same_v<typename Type::type, typename Hidden::type>
-		explicit consteval type_of(Type /*type*/){};
+		explicit constexpr type_of(Type /*type*/){};
 
 		// Equality operators
-		consteval auto operator==(type_of /*op*/) const -> bool { return true; }
+		constexpr auto operator==(type_of /*op*/) const -> bool { return true; }
 
 		template <class Op>
-		consteval auto operator==(type_of<Op> /*op*/) const -> bool { return false; }
+		constexpr auto operator==(type_of<Op> /*op*/) const -> bool { return false; }
 
 		template <class Op>
-		consteval auto operator==(Op /*op*/) const -> bool { return std::is_same_v<typename Hidden::type, typename Op::type>; }
+		constexpr auto operator==(Op /*op*/) const -> bool { return std::is_same_v<typename Hidden::type, typename Op::type>; }
 
 		// `true` represents a valid type
-		consteval explicit operator bool() const { return true; }
+		constexpr explicit operator bool() const { return true; }
 
 		// Invoke result. Returns `std::false_type` if not invocable.
-		consteval auto operator()(auto... types) const {
+		constexpr auto operator()(auto... types) const {
 			if constexpr (requires { std::declval<typename Hidden::type>()(std::declval<type_t<types>>()...); }) {
 				return type<decltype(std::declval<typename Hidden::type>()(std::declval<type_t<types>>()...))>;
 			} else {
@@ -64,7 +64,7 @@ struct type_of : std::type_identity<typename Hidden::type> {
 };
 
 export template <class Type>
-consteval auto remove_cvref(Type /*type*/) {
+constexpr auto remove_cvref(Type /*type*/) {
 	return type<std::remove_cvref_t<typename Type::type>>;
 }
 
