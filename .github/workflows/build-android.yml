@@ -440,7 +440,12 @@ jobs:
           # struct_template consteval crash but it hits the same crash and also
           # mis-escalates P2564. Now that the P2564 root (consteval format_string
           # in accept_with_cast) is fixed via vformat, retest the default evaluator.
-          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} \${_rtlib} -Wno-unused-command-line-argument")
+          # -fexperimental-new-constant-interpreter: needed to get past the
+          # earlier value-acceptor layers; the default evaluator and this one both
+          # still crash on the backend struct_template consteval below, but this
+          # keeps the known-furthest baseline.
+          set(_constexpr "-fexperimental-new-constant-interpreter")
+          set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++ \${_libcxx} \${_libcxx_abi} \${_rtlib} \${_constexpr} -Wno-unused-command-line-argument")
           set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
           set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++ \${_rtlib} -L\${_sysroot}/usr/lib/${TRIPLET} -lc++_shared")
