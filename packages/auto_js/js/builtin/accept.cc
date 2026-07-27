@@ -73,7 +73,14 @@ struct accept_with_cast {
 			} else if constexpr (js::accept_allows_throw<Accept>) {
 				auto coerced = static_cast<Type>(value);
 				if (static_cast<Subject>(coerced) != value) {
-					throw js::range_error{"Could not cast value {}", value};
+					// nb: Use std::vformat (runtime format) rather than the
+					// std::format_string overload of range_error. That overload's
+					// constructor is consteval, which P2564-escalates this whole cast()
+					// -> accept operator() chain into an immediate function; clang's new
+					// constant interpreter then rejects the runtime `this` use at the
+					// top of the visit/accept chain (visit.cc). vformat keeps this a
+					// plain runtime call.
+					throw js::range_error{std::u16string{util::transcode_string<char16_t>(std::string_view{std::vformat("Could not cast value {}", std::make_format_args(value))})}};
 				}
 				return coerced;
 			} else {
