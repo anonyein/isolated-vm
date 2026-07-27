@@ -622,7 +622,8 @@ jobs:
             echo "B exit: $?" ) || echo "B CRASHED/FAILED"
 
           echo "===== C) clang-23 + android + LLVM libc++ hdrs + __ndk1 ====="
-          LX=$(find /usr/lib/llvm-23/include -maxdepth 4 -name version -path '*c++*' | head -n1)
+          # nb: exclude the __cxx03 compat subdir; we want the real libc++ v1 headers.
+          LX=$(find /usr/lib/llvm-23/include -maxdepth 4 -name version -path '*c++/v1*' ! -path '*__cxx03*' | head -n1)
           LXDIR=$(dirname "$LX")
           ( set -x
             "$CXX" --target=x86_64-linux-android24 --sysroot="$SR" -stdlib=libc++ \
