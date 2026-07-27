@@ -548,10 +548,46 @@ jobs:
         # and runs out of the default 8 MiB thread stack. Raise the stack limit so
         # the (finite, valid) recursion can complete. ninja inherits this ulimit and
         # passes it on to the clang child processes.
+        #
+        # CLANG_CRASH_DIAGNOSTICS_DIR: when clang crashes it writes a fully
+        # self-contained reproducer (a preprocessed *.cpp/*.cppm with every module
+        # inlined + a *.sh run script) to this dir. That is the ONLY tractable input
+        # for locating the ASTReader corruption / filing an upstream LLVM bug --
+        # the crash needs the full auto_js reflection module graph, so a hand-written
+        # minimal repro does not trigger it (verified: the repro job's A/B/C all pass).
+        # We collect + upload these on failure.
+        env:
+          CLANG_CRASH_DIAGNOSTICS_DIR: /tmp/clang-crash
         run: |
           set -eux
+          mkdir -p /tmp/clang-crash
           ulimit -s unlimited || ulimit -s 131072 || true
           ninja -C build backend_napi_v8
+
+      - name: Collect clang crash reproducer
+        if: failure()
+        run: |
+          set -ux
+          echo "=== crash reproducer dir ==="
+          ls -la /tmp/clang-crash || true
+          # clang names them <tu>-<hash>.cpp/.cppm + <tu>-<hash>.sh
+          find /tmp/clang-crash -type f | head -50
+          # Also grab the .modmap the failing TU used (module -> BMI mapping) so the
+          # reproducer can be replayed against the same prebuilt BMIs if needed.
+          find build -name '*.modmap' | while read -r m; do
+            d="/tmp/clang-crash/modmaps/$(dirname "$m" | tr '/' '_')"
+            mkdir -p "$d"; cp "$m" "$d/" || true
+          done
+          # Compress for a smaller artifact.
+          tar -czf /tmp/clang-crash.tgz -C /tmp clang-crash || true
+          ls -lh /tmp/clang-crash.tgz || true
+
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: clang-crash-repro-${{ matrix.abi }}
+          path: /tmp/clang-crash.tgz
+          if-no-files-found: warn
 
       - name: Inspect artifact
         if: success()
