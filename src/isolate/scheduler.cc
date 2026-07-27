@@ -139,15 +139,18 @@ UvScheduler::UvScheduler(IsolateEnvironment& env) :
 		IVM_TRACE("async_cb sched=%p tid=%lu have_ref=%d count=%d", (void*)&scheduler, ivm_tid(), (int)(bool)ref, scheduler.uv_ref_count.load());
 		if (ref) {
 			ref->AsyncEntry();
-			if (--scheduler.uv_ref_count == 0) {
-				IVM_TRACE("async_cb UNREF (ran) sched=%p", (void*)&scheduler);
-				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
-			}
+			--scheduler.uv_ref_count;
+		}
+		// This callback always runs on the loop thread, so it is the single place allowed to mutate
+		// the handle's ref state. `Increment`/`DecrementUvRef` (which may run on any thread) only
+		// adjust the atomic count and wake us; here we reconcile the handle to match. This keeps the
+		// handle race-free while ensuring `uv_loop_alive` reflects the true outstanding-work count.
+		if (scheduler.uv_ref_count.load() > 0) {
+			IVM_TRACE("async_cb REF sched=%p count=%d", (void*)&scheduler, scheduler.uv_ref_count.load());
+			uv_ref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
 		} else {
-			if (scheduler.uv_ref_count.load() == 0) {
-				IVM_TRACE("async_cb UNREF (no ref) sched=%p", (void*)&scheduler);
-				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
-			}
+			IVM_TRACE("async_cb UNREF sched=%p", (void*)&scheduler);
+			uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
 		}
 	});
 	uv_async->data = this;
@@ -163,37 +166,22 @@ UvScheduler::~UvScheduler() {
 void UvScheduler::DecrementUvRef() {
 	int count_after = --uv_ref_count;
 	IVM_TRACE("DecrementUvRef sched=%p tid=%lu count=%d locked=%d", (void*)this, ivm_tid(), count_after, (int)v8::Locker::IsLocked(env.GetIsolate()));
-	if (count_after == 0) {
-		// `uv_ref`/`uv_unref` mutate the handle and must not race with `uv_run`. The loop is only
-		// driven while a thread holds this isolate's v8::Locker (node's own loop thread, or a host
-		// embedder like Javet running `uv_run` under the locker), so holding the locker here means we
-		// are mutually exclusive with the loop and can touch the handle directly. Otherwise (a worker
-		// thread finishing cross-isolate work) wake the loop via `uv_async_send`; the async callback
-		// then unrefs the handle from the loop thread once the count is zero.
-		if (v8::Locker::IsLocked(env.GetIsolate())) {
-			uv_unref(reinterpret_cast<uv_handle_t*>(uv_async));
-		} else {
-			uv_async_send(uv_async);
-		}
-	}
+	// `uv_ref`/`uv_unref` mutate the handle and must not race with `uv_run` or with each other. In
+	// upstream all ref changes happen on the single default (loop) thread; but a host embedder like
+	// Javet drives the same node loop from a rotating thread pool, so callers here run on arbitrary
+	// threads. To stay correct we never touch the handle off the loop: we only maintain the atomic
+	// count and wake the loop, which reconciles the handle's ref state against the count in its async
+	// callback. `uv_async_send` is the one libuv call that is safe from any thread.
+	uv_async_send(uv_async);
 }
 
 void UvScheduler::IncrementUvRef() {
 	int count_after = ++uv_ref_count;
 	IVM_TRACE("IncrementUvRef sched=%p tid=%lu count=%d locked=%d", (void*)this, ivm_tid(), count_after, (int)v8::Locker::IsLocked(env.GetIsolate()));
-	if (count_after == 1) {
-		// See `DecrementUvRef`. When the caller holds this isolate's locker (JS scheduling async work
-		// on the node loop thread, including a host embedder like Javet driving the loop) we `uv_ref`
-		// directly so it takes effect immediately -- this is required so `uv_loop_alive` (which
-		// node/Javet's `await` polls) sees the pending work before returning. In upstream this branch
-		// is only ever reached while holding the locker; the `uv_async_send` fallback merely wakes the
-		// loop for the unusual off-lock case instead of asserting.
-		if (v8::Locker::IsLocked(env.GetIsolate())) {
-			uv_ref(reinterpret_cast<uv_handle_t*>(uv_async));
-		} else {
-			uv_async_send(uv_async);
-		}
-	}
+	// See `DecrementUvRef`. Only maintain the count here and wake the loop; the loop thread applies
+	// `uv_ref`/`uv_unref` to match. This wake is required so `uv_loop_alive` (which node/Javet's
+	// `await` polls) observes the pending work and the reconciled ref before the loop can exit.
+	uv_async_send(uv_async);
 }
 
 void UvScheduler::SendWake() {
