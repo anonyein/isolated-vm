@@ -379,7 +379,12 @@ jobs:
           set(CMAKE_CXX_COMPILER "\${_llvm}/bin/clang++")
           set(CMAKE_C_COMPILER_TARGET "\${_triple}")
           set(CMAKE_CXX_COMPILER_TARGET "\${_triple}")
-          set(CMAKE_SYSROOT "\${_sysroot}")
+          # DIAG mode: use the HOST glibc sysroot (not the android NDK sysroot) so
+          # a linux-gnu target can actually link the compiler-sanity test and reach
+          # the backend BMI compile. Real android build keeps the NDK sysroot.
+          if("\$ENV{DIAG_TRIPLE}" STREQUAL "")
+            set(CMAKE_SYSROOT "\${_sysroot}")
+          endif()
 
           # libc++ HEADERS come from the standalone LLVM (v22), NOT the NDK (v18).
           # Rationale: the exact same sources build cleanly on normal platforms with
@@ -562,3 +567,72 @@ jobs:
           name: isolated-vm-android-${{ matrix.abi }}
           path: build/packages/backend_napi_v8/artifacts
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Minimal, self-contained repro of the clang module/BMI crash, isolated from
+  # the full isolated-vm project. Compiles two tiny C++26 module files under
+  # several toolchain configs to pinpoint WHICH variable triggers the
+  # `realloc(): invalid pointer` / ASTReader crash:
+  #   A) clang-23 + linux-gnu target + native libc++   (== upstream-like)
+  #   B) clang-23 + android  target + NDK libc++18
+  #   C) clang-23 + android  target + LLVM libc++ hdrs + __ndk1  (== our build)
+  # The first config that crashes identifies the responsible variable. Each is
+  # run with `|| true` so all configs report even if earlier ones crash.
+  repro:
+    name: Repro (clang crash isolation)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install clang-23 + NDK
+        run: |
+          set -eux
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 23 all
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+
+      - name: Run repro matrix
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -ux
+          CXX=/usr/lib/llvm-23/bin/clang++
+          SR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          D=.github/repro
+          "$CXX" --version
+
+          echo "===== A) clang-23 + linux-gnu + native libc++ ====="
+          ( set -x
+            "$CXX" --target=x86_64-unknown-linux-gnu -stdlib=libc++ -std=gnu++26 \
+              -fno-modules-reduced-bmi --precompile "$D/m.cppm" -o /tmp/mA.pcm &&
+            "$CXX" --target=x86_64-unknown-linux-gnu -stdlib=libc++ -std=gnu++26 \
+              -fno-modules-reduced-bmi -fmodule-file=m=/tmp/mA.pcm -c "$D/consumer.cppm" -o /tmp/cA.o
+            echo "A exit: $?" ) || echo "A CRASHED/FAILED"
+
+          echo "===== B) clang-23 + android + NDK libc++18 ====="
+          ( set -x
+            "$CXX" --target=x86_64-linux-android24 --sysroot="$SR" -stdlib=libc++ -std=gnu++26 \
+              -fno-modules-reduced-bmi --precompile "$D/m.cppm" -o /tmp/mB.pcm &&
+            "$CXX" --target=x86_64-linux-android24 --sysroot="$SR" -stdlib=libc++ -std=gnu++26 \
+              -fno-modules-reduced-bmi -fmodule-file=m=/tmp/mB.pcm -c "$D/consumer.cppm" -o /tmp/cB.o
+            echo "B exit: $?" ) || echo "B CRASHED/FAILED"
+
+          echo "===== C) clang-23 + android + LLVM libc++ hdrs + __ndk1 ====="
+          LX=$(find /usr/lib/llvm-23/include -maxdepth 4 -name version -path '*c++*' | head -n1)
+          LXDIR=$(dirname "$LX")
+          ( set -x
+            "$CXX" --target=x86_64-linux-android24 --sysroot="$SR" -stdlib=libc++ \
+              -nostdinc++ -isystem "$LXDIR" -std=gnu++26 -fno-modules-reduced-bmi \
+              -D_LIBCPP_ABI_NAMESPACE=__ndk1 -D_LIBCPP_ABI_VERSION=1 -D__BIONIC_CTYPE_INLINE=inline \
+              --precompile "$D/m.cppm" -o /tmp/mC.pcm &&
+            "$CXX" --target=x86_64-linux-android24 --sysroot="$SR" -stdlib=libc++ \
+              -nostdinc++ -isystem "$LXDIR" -std=gnu++26 -fno-modules-reduced-bmi \
+              -D_LIBCPP_ABI_NAMESPACE=__ndk1 -D_LIBCPP_ABI_VERSION=1 -D__BIONIC_CTYPE_INLINE=inline \
+              -fmodule-file=m=/tmp/mC.pcm -c "$D/consumer.cppm" -o /tmp/cC.o
+            echo "C exit: $?" ) || echo "C CRASHED/FAILED"
+
+          echo "===== repro matrix done ====="
