@@ -72,10 +72,24 @@ jobs:
             triplet: aarch64-linux-android
           - abi: x86_64
             triplet: x86_64-linux-android
+            # DIAGNOSTIC ONLY: override the compiler target triple to a plain
+            # linux-gnu triple (keeping EVERYTHING else identical: clang-23, the
+            # assembled libc++ headers, NDK sysroot, __ndk1 ABI, all flags). The
+            # realloc()/ASTReader crash happens during BMI emission (frontend),
+            # which is decided by the target triple's ABI/predefined macros, not
+            # by sysroot libs. If the .cc.o compile gets PAST the crash (link will
+            # fail later, we don't care), the -android target is the trigger. If
+            # it still crashes, clang-23 itself is at fault, independent of Android.
+            diag_triple: x86_64-unknown-linux-gnu
 
     env:
       ABI: ${{ matrix.abi }}
       TRIPLET: ${{ matrix.triplet }}
+      # DIAGNOSTIC ONLY (empty for the real arm64 build): when set, the compiler
+      # target triple is overridden to this value while sysroot/libc++/flags stay
+      # identical. Used to isolate whether the -android target triggers the
+      # clang ASTReader realloc crash.
+      DIAG_TRIPLE: ${{ matrix.diag_triple }}
       JAVET_SO_NAME: libjavet-node-android-i18n.v.5.0.10.so
 
     steps:
@@ -352,7 +366,14 @@ jobs:
           set(_ndk "\$ENV{ANDROID_NDK_HOME}")
           set(_sysroot "\${_ndk}/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
           set(_llvm "\$ENV{LLVM_DIR}")
-          set(_triple ${TRIPLET}${ANDROID_API})
+          # DIAG_TRIPLE (diagnostic only): if set, use it verbatim as the compiler
+          # target (no API suffix) to isolate the -android target as the crash
+          # trigger. Empty for the real Android build -> normal <triplet><api>.
+          if("\$ENV{DIAG_TRIPLE}" STREQUAL "")
+            set(_triple ${TRIPLET}${ANDROID_API})
+          else()
+            set(_triple \$ENV{DIAG_TRIPLE})
+          endif()
 
           set(CMAKE_C_COMPILER "\${_llvm}/bin/clang")
           set(CMAKE_CXX_COMPILER "\${_llvm}/bin/clang++")
