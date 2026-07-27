@@ -193,14 +193,40 @@ class Executor { // "En taro adun"
 };
 
 inline auto Executor::GetCurrentEnvironment() -> IsolateEnvironment* {
-	return current_executor == nullptr ? nullptr : &current_executor->env;
+	if (current_executor != nullptr) {
+		return &current_executor->env;
+	}
+	// No `Executor::Scope` on this thread. This happens when v8/node calls back into ivm directly
+	// (microtasks, promise-reject, GC/weak callbacks, etc.) on a thread that a host embedder (e.g.
+	// Javet) drives from a thread pool rather than the thread that loaded the module. Recover the
+	// node environment from the current isolate. This does not set `current_executor` because there
+	// is no matching scope to restore it; callers that need the executor active should use
+	// `RecoverScope`.
+	auto* isolate = v8::Isolate::GetCurrent();
+	if (isolate != nullptr) {
+		auto* executor = LookupNodeExecutor(isolate);
+		if (executor != nullptr) {
+			return &executor->env;
+		}
+	}
+	return nullptr;
 }
 
 inline auto Executor::GetDefaultEnvironment() -> IsolateEnvironment& {
-	return current_executor->default_executor.env;
+	if (current_executor != nullptr) {
+		return current_executor->default_executor.env;
+	}
+	// See `GetCurrentEnvironment`. On a foreign thread the recovered node executor is itself the
+	// default (node) executor.
+	return LookupNodeExecutor(v8::Isolate::GetCurrent())->default_executor.env;
 }
 
 inline auto Executor::IsDefaultThread() -> bool {
+	// `current_executor` may be null on a foreign embedder thread. Such a thread is by definition not
+	// the default (node loop) thread.
+	if (current_executor == nullptr) {
+		return false;
+	}
 	return std::this_thread::get_id() == current_executor->default_thread;
 };
 
