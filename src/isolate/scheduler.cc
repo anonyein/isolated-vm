@@ -6,6 +6,18 @@
 #include <v8.h>
 #include <utility>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <thread>
+#define IVM_TRACE(...) __android_log_print(ANDROID_LOG_ERROR, "ivm_sched", __VA_ARGS__)
+static auto ivm_tid() -> unsigned long {
+	return static_cast<unsigned long>(std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0xffff);
+}
+#else
+#define IVM_TRACE(...) ((void)0)
+static auto ivm_tid() -> unsigned long { return 0; }
+#endif
+
 using namespace v8;
 namespace ivm {
 namespace {
@@ -41,6 +53,7 @@ void Scheduler::InterruptSyncIsolate() {
 }
 
 auto Scheduler::WakeIsolate(std::shared_ptr<IsolateEnvironment> isolate_ptr) -> bool {
+	IVM_TRACE("WakeIsolate sched=%p tid=%lu status=%d default=%d", (void*)this, ivm_tid(), (int)status, (int)env.IsDefault());
 	if (status == Status::Waiting) {
 		status = Status::Running;
 		// Move shared reference to this scheduler to ensure the IsolateEnvironment won't be deleted
@@ -51,6 +64,7 @@ auto Scheduler::WakeIsolate(std::shared_ptr<IsolateEnvironment> isolate_ptr) -> 
 		SendWake();
 		return true;
 	} else {
+		IVM_TRACE("WakeIsolate SKIP (already running) sched=%p tid=%lu", (void*)this, ivm_tid());
 		return false;
 	}
 }
@@ -100,7 +114,9 @@ void IsolatedScheduler::SendWake() {
 		// try to invoke `uv_ref` from a non-default thread.
 		auto& default_scheduler = scheduler.default_scheduler;
 		ref = {};
-		if (--default_scheduler.uv_ref_count == 0) {
+		auto after = --default_scheduler.uv_ref_count;
+		IVM_TRACE("IsolatedSendWake done tid=%lu pool=%d default_count=%d", ivm_tid(), (int)pool_thread, after);
+		if (after == 0) {
 			// Wake up the libuv loop so we can unref the async handle from the default thread.
 			uv_async_send(default_scheduler.uv_async);
 		}
@@ -120,13 +136,16 @@ UvScheduler::UvScheduler(IsolateEnvironment& env) :
 			std::lock_guard<std::mutex> lock{scheduler.mutex};
 			return std::exchange(scheduler.env_ref, {});
 		}();
+		IVM_TRACE("async_cb sched=%p tid=%lu have_ref=%d count=%d", (void*)&scheduler, ivm_tid(), (int)(bool)ref, scheduler.uv_ref_count.load());
 		if (ref) {
 			ref->AsyncEntry();
 			if (--scheduler.uv_ref_count == 0) {
+				IVM_TRACE("async_cb UNREF (ran) sched=%p", (void*)&scheduler);
 				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
 			}
 		} else {
 			if (scheduler.uv_ref_count.load() == 0) {
+				IVM_TRACE("async_cb UNREF (no ref) sched=%p", (void*)&scheduler);
 				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
 			}
 		}
@@ -142,7 +161,9 @@ UvScheduler::~UvScheduler() {
 }
 
 void UvScheduler::DecrementUvRef() {
-	if (--uv_ref_count == 0) {
+	int count_after = --uv_ref_count;
+	IVM_TRACE("DecrementUvRef sched=%p tid=%lu count=%d locked=%d", (void*)this, ivm_tid(), count_after, (int)v8::Locker::IsLocked(env.GetIsolate()));
+	if (count_after == 0) {
 		// `uv_ref`/`uv_unref` mutate the handle and must not race with `uv_run`. The loop is only
 		// driven while a thread holds this isolate's v8::Locker (node's own loop thread, or a host
 		// embedder like Javet running `uv_run` under the locker), so holding the locker here means we
@@ -158,7 +179,9 @@ void UvScheduler::DecrementUvRef() {
 }
 
 void UvScheduler::IncrementUvRef() {
-	if (++uv_ref_count == 1) {
+	int count_after = ++uv_ref_count;
+	IVM_TRACE("IncrementUvRef sched=%p tid=%lu count=%d locked=%d", (void*)this, ivm_tid(), count_after, (int)v8::Locker::IsLocked(env.GetIsolate()));
+	if (count_after == 1) {
 		// See `DecrementUvRef`. When the caller holds this isolate's locker (JS scheduling async work
 		// on the node loop thread, including a host embedder like Javet driving the loop) we `uv_ref`
 		// directly so it takes effect immediately -- this is required so `uv_loop_alive` (which
