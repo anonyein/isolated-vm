@@ -66,10 +66,15 @@ if n != 1:
 #        'conditions': [
 #            [ 'OS != "win"', { ... nortti ... } ],
 #        ],
-#    We append an Android-specific entry that forces C++20 / RTTI / exceptions
-#    and wires up include dirs + rpath. NDK clang already supplies libc++.
+#    IMPORTANT: gyp's `OS` variable reflects the *host* running node-gyp, which
+#    is `linux` on the GitHub runner during this cross build -- NOT `android`.
+#    So the branch is gated on `OS == "linux"` (this patch script only ever runs
+#    inside the Android CI job, so it can safely claim the linux branch).
+#    It forces C++20 / RTTI / exceptions, sets an $ORIGIN rpath so the addon
+#    finds the co-located Javet .so at runtime, and turns undefined symbols into
+#    link-time errors. NDK clang already supplies libc++.
 android_cond = (
-    "\t\t\t\t[ 'OS == \"android\"', {\n"
+    "\t\t\t\t[ 'OS == \"linux\"', {\n"
     "\t\t\t\t\t'cflags_cc': [ '-std=c++20', '-frtti', '-fexceptions', '-fPIC' ],\n"
     "\t\t\t\t\t'cflags_cc!': [ '-fno-rtti', '-fno-exceptions' ],\n"
     "\t\t\t\t\t'cflags': [ '-fPIC' ],\n"
