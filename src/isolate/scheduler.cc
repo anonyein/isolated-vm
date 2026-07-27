@@ -122,13 +122,16 @@ UvScheduler::UvScheduler(IsolateEnvironment& env) :
 		}();
 		if (ref) {
 			ref->AsyncEntry();
-			if (--scheduler.uv_ref_count == 0) {
-				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
-			}
+			--scheduler.uv_ref_count;
+		}
+		// Reconcile the async handle's ref state with the outstanding work count. `uv_ref`/`uv_unref`
+		// must run on the loop thread; foreign threads (e.g. a host embedder like Javet driving the
+		// loop from a thread pool) defer here via `uv_async_send`. Both calls are idempotent so it is
+		// safe to reconcile unconditionally.
+		if (scheduler.uv_ref_count.load() == 0) {
+			uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
 		} else {
-			if (scheduler.uv_ref_count.load() == 0) {
-				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
-			}
+			uv_ref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
 		}
 	});
 	uv_async->data = this;
@@ -146,6 +149,7 @@ void UvScheduler::DecrementUvRef() {
 		if (Executor::IsDefaultThread()) {
 			uv_unref(reinterpret_cast<uv_handle_t*>(uv_async));
 		} else {
+			// `uv_unref` isn't safe off the loop thread; wake the loop so it reconciles ref state.
 			uv_async_send(uv_async);
 		}
 	}
@@ -153,9 +157,15 @@ void UvScheduler::DecrementUvRef() {
 
 void UvScheduler::IncrementUvRef() {
 	if (++uv_ref_count == 1) {
-		// Only the default thread should be able to reach this branch
-		assert(Executor::IsDefaultThread());
-		uv_ref(reinterpret_cast<uv_handle_t*>(uv_async));
+		if (Executor::IsDefaultThread()) {
+			uv_ref(reinterpret_cast<uv_handle_t*>(uv_async));
+		} else {
+			// A foreign thread (e.g. a host embedder like Javet driving the node loop from a thread
+			// pool) can reach this when scheduling work. `uv_ref` isn't safe off the loop thread, so
+			// wake the loop; the async callback reconciles the handle's ref state to match
+			// `uv_ref_count`.
+			uv_async_send(uv_async);
+		}
 	}
 }
 
