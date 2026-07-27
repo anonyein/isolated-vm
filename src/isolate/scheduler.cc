@@ -122,17 +122,13 @@ UvScheduler::UvScheduler(IsolateEnvironment& env) :
 		}();
 		if (ref) {
 			ref->AsyncEntry();
-			--scheduler.uv_ref_count;
-		}
-		// This callback always runs on the loop thread, so it is safe to touch the handle directly.
-		// Reconcile the handle's ref state with the outstanding work count: this both completes the
-		// `unref` deferred from `DecrementUvRef` when work finishes, and applies the `ref` deferred
-		// from `IncrementUvRef` when an off-lock thread scheduled work (so `uv_loop_alive` keeps the
-		// loop alive until that work drains). `uv_ref`/`uv_unref` are idempotent.
-		if (scheduler.uv_ref_count.load() == 0) {
-			uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
+			if (--scheduler.uv_ref_count == 0) {
+				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
+			}
 		} else {
-			uv_ref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
+			if (scheduler.uv_ref_count.load() == 0) {
+				uv_unref(reinterpret_cast<uv_handle_t*>(scheduler.uv_async));
+			}
 		}
 	});
 	uv_async->data = this;
@@ -150,9 +146,9 @@ void UvScheduler::DecrementUvRef() {
 		// `uv_ref`/`uv_unref` mutate the handle and must not race with `uv_run`. The loop is only
 		// driven while a thread holds this isolate's v8::Locker (node's own loop thread, or a host
 		// embedder like Javet running `uv_run` under the locker), so holding the locker here means we
-		// are mutually exclusive with the loop and can touch the handle directly. Otherwise (e.g. a
-		// worker thread finishing cross-isolate work) defer to the loop via `uv_async_send`; the async
-		// callback reconciles the handle's ref state.
+		// are mutually exclusive with the loop and can touch the handle directly. Otherwise (a worker
+		// thread finishing cross-isolate work) wake the loop via `uv_async_send`; the async callback
+		// then unrefs the handle from the loop thread once the count is zero.
 		if (v8::Locker::IsLocked(env.GetIsolate())) {
 			uv_unref(reinterpret_cast<uv_handle_t*>(uv_async));
 		} else {
@@ -163,11 +159,12 @@ void UvScheduler::DecrementUvRef() {
 
 void UvScheduler::IncrementUvRef() {
 	if (++uv_ref_count == 1) {
-		// See `DecrementUvRef`. When the caller holds this isolate's locker (e.g. scheduling async
-		// work from JS running on the node loop thread, including a host embedder thread) we `uv_ref`
+		// See `DecrementUvRef`. When the caller holds this isolate's locker (JS scheduling async work
+		// on the node loop thread, including a host embedder like Javet driving the loop) we `uv_ref`
 		// directly so it takes effect immediately -- this is required so `uv_loop_alive` (which
-		// `node`/Javet's `await` polls) sees the pending work before returning. Off-lock callers
-		// defer to the loop thread, which reconciles ref state in the async callback.
+		// node/Javet's `await` polls) sees the pending work before returning. In upstream this branch
+		// is only ever reached while holding the locker; the `uv_async_send` fallback merely wakes the
+		// loop for the unusual off-lock case instead of asserting.
 		if (v8::Locker::IsLocked(env.GetIsolate())) {
 			uv_ref(reinterpret_cast<uv_handle_t*>(uv_async));
 		} else {
