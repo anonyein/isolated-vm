@@ -2,13 +2,6 @@
 #include "external_copy/external_copy.h"
 #include <cstring>
 
-#ifdef __ANDROID__
-#include <android/log.h>
-#define IVM_TPT_TRACE(...) __android_log_print(ANDROID_LOG_ERROR, "ivm_tpt", __VA_ARGS__)
-#else
-#define IVM_TPT_TRACE(...) ((void)0)
-#endif
-
 using namespace v8;
 using std::unique_ptr;
 
@@ -218,9 +211,6 @@ auto ThreePhaseTask::RunSync(IsolateHolder& second_isolate, bool allow_async) ->
 	if (!second_isolate_ref) {
 		throw RuntimeGenericError("Isolated is disposed");
 	}
-	IVM_TPT_TRACE("RunSync enter allow_async=%d default_thread=%d second_is_default=%d same_isolate=%d",
-		(int)allow_async, (int)Executor::IsDefaultThread(), (int)second_isolate_ref->IsDefault(),
-		(int)(second_isolate_ref->GetIsolate() == Isolate::GetCurrent()));
 	if (second_isolate_ref->GetIsolate() == Isolate::GetCurrent()) {
 		if (allow_async) {
 			throw RuntimeGenericError("This function may not be called from the default thread");
@@ -233,8 +223,6 @@ auto ThreePhaseTask::RunSync(IsolateHolder& second_isolate, bool allow_async) ->
 	} else {
 
 		bool is_recursive = Locker::IsLocked(second_isolate_ref->GetIsolate());
-		IVM_TPT_TRACE("RunSync else-branch is_recursive=%d default_thread=%d second_is_default=%d",
-			(int)is_recursive, (int)Executor::IsDefaultThread(), (int)second_isolate_ref->IsDefault());
 		if (Executor::IsDefaultThread() || is_recursive) {
 			if (allow_async) {
 				throw RuntimeGenericError("This function may not be called from the default thread");
