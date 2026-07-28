@@ -82,7 +82,6 @@ android_cond = (
     "\t\t\t\t\t'ldflags': [\n"
     "\t\t\t\t\t\t'-Wl,--no-undefined',\n"
     "\t\t\t\t\t\t\"-Wl,-rpath,'$$ORIGIN'\",\n"
-    "\t\t\t\t\t\t'-llog',\n"
     "\t\t\t\t\t],\n"
     "\t\t\t\t} ],\n"
 )
