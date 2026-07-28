@@ -2,6 +2,18 @@
 #include "external_copy/external_copy.h"
 #include <cstring>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <thread>
+#define IVM_TPT_TRACE(...) __android_log_print(ANDROID_LOG_ERROR, "ivm_tpt", __VA_ARGS__)
+static auto ivm_tpt_tid() -> unsigned long {
+	return static_cast<unsigned long>(std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0xffff);
+}
+#else
+#define IVM_TPT_TRACE(...) ((void)0)
+static auto ivm_tpt_tid() -> unsigned long { return 0; }
+#endif
+
 using namespace v8;
 using std::unique_ptr;
 
@@ -117,6 +129,7 @@ void ThreePhaseTask::Phase2Runner::Run() {
 			error(std::move(error)) {}
 
 		void Run() final {
+			IVM_TPT_TRACE("Phase3Failure::Run tid=%lu", ivm_tpt_tid());
 			// Revive our persistent handles
 			Isolate* isolate = Isolate::GetCurrent();
 			auto context_local = info.remotes.Deref<1>();
@@ -151,6 +164,7 @@ void ThreePhaseTask::Phase2Runner::Run() {
 			info(std::move(info)) {}
 
 		void Run() final {
+			IVM_TPT_TRACE("Phase3Success::Run ENTER self=%p tid=%lu", (void*)self.get(), ivm_tpt_tid());
 			Isolate* isolate = Isolate::GetCurrent();
 			auto context_local = info.remotes.Deref<1>();
 			Context::Scope context_scope(context_local);
@@ -167,12 +181,15 @@ void ThreePhaseTask::Phase2Runner::Run() {
 				Unmaybe(promise_local->Reject(context_local, error));
 			});
 			isolate->PerformMicrotaskCheckpoint();
+			IVM_TPT_TRACE("Phase3Success::Run EXIT self=%p", (void*)self.get());
 		}
 	};
 
 	did_run = true;
+	IVM_TPT_TRACE("Phase2Runner::Run ENTER self=%p tid=%lu", (void*)self.get(), ivm_tpt_tid());
 	auto schedule_error = [&](std::unique_ptr<ExternalCopy> error) {
 		// Schedule a task to enter the first isolate so we can throw the error at the promise
+		IVM_TPT_TRACE("Phase2Runner schedule Phase3Failure self=%p", (void*)self.get());
 		auto* holder = info.remotes.GetIsolateHolder();
 		holder->ScheduleTask(std::make_unique<Phase3Failure>(std::move(self), std::move(info), std::move(error)), false, true);
 	};
@@ -181,12 +198,15 @@ void ThreePhaseTask::Phase2Runner::Run() {
 		self->Phase2();
 		auto epilogue_error = IsolateEnvironment::GetCurrent().TaskEpilogue();
 		if (epilogue_error) {
+			IVM_TPT_TRACE("Phase2Runner Phase2 epilogue_error self=%p", (void*)self.get());
 			schedule_error(std::move(epilogue_error));
 		} else {
+			IVM_TPT_TRACE("Phase2Runner schedule Phase3Success self=%p", (void*)self.get());
 			auto* holder = info.remotes.GetIsolateHolder();
 			holder->ScheduleTask(std::make_unique<Phase3Success>(std::move(self), std::move(info)), false, true);
 		}
 	}, schedule_error);
+	IVM_TPT_TRACE("Phase2Runner::Run EXIT tid=%lu", ivm_tpt_tid());
 }
 
 /**
