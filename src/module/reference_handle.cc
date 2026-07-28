@@ -5,6 +5,13 @@
 #include "transferable.h"
 #include <array>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define IVM_AP_TRACE(...) __android_log_print(ANDROID_LOG_ERROR, "ivm_apply", __VA_ARGS__)
+#else
+#define IVM_AP_TRACE(...) ((void)0)
+#endif
+
 using namespace v8;
 using std::shared_ptr;
 using std::unique_ptr;
@@ -272,7 +279,9 @@ class ApplyRunner : public ThreePhaseTask {
 					return fn.As<Function>()->Call(context_handle, recv_inner, argv_inner.size(), argv_inner.empty() ? nullptr : &argv_inner[0]);
 				}
 			);
+			IVM_AP_TRACE("Phase2 done result_is_promise=%d promise_opt=%d", (int)result->IsPromise(), (int)return_transfer_options.promise);
 			ret = TransferOut(result, return_transfer_options);
+			IVM_AP_TRACE("Phase2 TransferOut done ret=%p", (void*)ret.get());
 		}
 
 		auto Phase2Async(Scheduler::AsyncWait& wait) -> bool final {
@@ -314,6 +323,7 @@ class ApplyRunner : public ThreePhaseTask {
 		}
 
 		auto Phase3() -> Local<Value> final {
+			IVM_AP_TRACE("Phase3 did_finish=%d async_error=%d ret=%p", did_finish ? (int)*did_finish : -1, (int)(bool)async_error, (void*)ret.get());
 			if (did_finish && *did_finish == 0) {
 				*did_finish = 1;
 				throw RuntimeGenericError("Script execution timed out.");
@@ -321,7 +331,9 @@ class ApplyRunner : public ThreePhaseTask {
 				Isolate::GetCurrent()->ThrowException(async_error->CopyInto());
 				throw RuntimeError();
 			} else {
-				return ret->TransferIn();
+				auto result = ret->TransferIn();
+				IVM_AP_TRACE("Phase3 TransferIn done is_promise=%d", (int)result->IsPromise());
+				return result;
 			}
 		}
 

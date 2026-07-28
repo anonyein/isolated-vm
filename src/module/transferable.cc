@@ -9,6 +9,13 @@
 #include "external_copy_handle.h"
 #include <deque>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define IVM_TP_TRACE(...) __android_log_print(ANDROID_LOG_ERROR, "ivm_promise", __VA_ARGS__)
+#else
+#define IVM_TP_TRACE(...) ((void)0)
+#endif
+
 using namespace v8;
 
 namespace ivm {
@@ -50,6 +57,7 @@ class TransferablePromiseHolder final : public ClassHandle {
 
 		void Accept(Local<Promise> promise) {
 			auto state = promise->State();
+			IVM_TP_TRACE("TP::Accept state=%d", (int)state);
 			if (state == Promise::PromiseState::kPending) {
 				auto* isolate = Isolate::GetCurrent();
 				auto context = isolate->GetCurrentContext();
@@ -97,6 +105,7 @@ class TransferablePromiseHolder final : public ClassHandle {
 				resolved_value = lock->value;
 				return std::exchange(lock->waiting, {});
 			}();
+			IVM_TP_TRACE("PromiseHolder::Save did_throw=%d pending_tasks=%d", (int)did_throw, (int)pending_tasks.size());
 			for (auto& resolver : pending_tasks) {
 				auto holder = resolver.GetIsolateHolder();
 				holder->ScheduleTask(
@@ -116,6 +125,7 @@ class TransferablePromiseHolder final : public ClassHandle {
 				resolver{std::move(resolver)}, value{std::move(value)}, did_throw{did_throw} {}
 
 			void Run() final {
+				IVM_TP_TRACE("PromiseHolder::ResolveTask::Run did_throw=%d", (int)did_throw);
 				auto context = this->resolver.Deref<1>();
 				Context::Scope context_scope{context};
 				auto resolver = this->resolver.Deref<0>();
@@ -153,6 +163,7 @@ class TransferablePromise : public Transferable {
 			auto context = isolate->GetCurrentContext();
 			auto resolver = Unmaybe(Promise::Resolver::New(context));
 			auto lock = state->write();
+			IVM_TP_TRACE("TP::TransferIn resolved=%d did_throw=%d", (int)lock->resolved, (int)lock->did_throw);
 			if (lock->resolved) {
 				if (lock->did_throw) {
 					Unmaybe(resolver->Reject(context, lock->value->TransferIn()));
