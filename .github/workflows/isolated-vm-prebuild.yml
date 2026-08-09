@@ -2,10 +2,10 @@ name: isolated-vm Android Cross Build
 
 # Cross-compiles isolated-vm into an Android .node addon and links it directly
 # against the prebuilt Javet Node runtime shared library that already lives in
-# the repo (libs/<abi>/libjavet-node-android-i18n.v.5.0.10.so). That .so exports
+# the repo (libs/<abi>/libjavet-node-android-i18n.v.5.0.11.so). That .so exports
 # the full V8/Node C++ symbols (verified: 1608 v8::* / 5948 node::* mangled
 # symbols) plus the N-API C ABI, so it can serve as the link target. Node.js
-# 24.18.0 headers are fetched via node-gyp; the build uses the Android NDK
+# 24.19.0 headers are fetched via node-gyp; the build uses the Android NDK
 # clang++/libc++ toolchain to stay ABI-compatible with the .so (NDK libc++,
 # __ndk1 namespace).
 
@@ -17,20 +17,20 @@ on:
       node_version:
         description: 'Node.js version (headers) for the Android build'
         required: false
-        default: '24.18.0'
+        default: '24.19.0'
 
 permissions:
   contents: write
 
 env:
-  NODE_VERSION: ${{ github.event.inputs.node_version || '24.18.0' }}
+  NODE_VERSION: ${{ github.event.inputs.node_version || '24.19.0' }}
   NDK_VERSION: r27d
   ANDROID_API: '24'
   # Basename of the Javet Node runtime .so bundled under libs/<abi>/
-  JAVET_SO: libjavet-node-android-i18n.v.5.0.10.so
+  JAVET_SO: libjavet-node-android-i18n.v.5.0.11.so
   # The two .so files exceed GitHub's 100MB file limit, so they ship zipped
   # (libs/<abi>/<so> layout inside) and are extracted at build time.
-  JAVET_SO_ZIP: libjavet-node-android-i18n.v.5.0.10.zip
+  JAVET_SO_ZIP: libjavet-node-android-i18n.v.5.0.11.zip
 
 jobs:
   cross-build:
