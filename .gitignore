@@ -5,3 +5,6 @@ out/
 .cache/
 compile_commands.json
 /prebuilds/
+# Extracted from the per-ABI libjavet-*.zip at build time (~174MB each);
+# never commit the raw .so files.
+/libs/
