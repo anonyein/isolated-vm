@@ -195,6 +195,16 @@ contains can represent quite a large chunk of memory though you may want to expl
     this is invoked it means that v8 has lost all control over the isolate, and all resources in use
     are totally unrecoverable. If you receive this error you should log the error, stop serving
     requests, finish outstanding work, and end the process by calling `process.abort()`.
+  * `onUnhandledRejection` *[function]* - Callback to be invoked when a promise is rejected without a
+    handler. By default such a rejection is thrown out of whichever call into the isolate happens to
+    be running, which may be one unrelated to the promise. If this callback is set the rejected value
+    is passed to it instead and nothing is thrown. Errors thrown by the callback are ignored.
+  * `importModuleDynamically` *[function]* - Callback which resolves `import()` for the code this
+    isolate runs. It accepts two parameters: `specifier` and `referrer`, the `filename` used in
+    [`ScriptOrigin`](#scriptorigin) by the script or module which called `import()`. It must return
+    a `Module` which has been instantiated and evaluated, or a promise for one, since the importing
+    code is given that module's namespace. Nothing is cached, so answer the same specifier with the
+    same module. Without this option `import()` rejects with "Not supported".
 
 *NOTE*: `snapshot` contains compiled machine code. That means you should not accept `snapshot`
 payloads from a user, otherwise they may be able to run arbitrary code.
@@ -405,6 +415,10 @@ module will have no effect.
 * `options` *[object]* - Optional.
 	* `timeout` *[number]* - Maximum amount of time in milliseconds this module is allowed to
 	run before execution is canceled. Default is no timeout.
+	* `promise` *[boolean]* - Resolve once the module has finished running rather than when it
+	first yields, and reject with the error it threw along the way. `evaluateSync` returns a
+	promise when this option is set, even for an error thrown before the first yield. `timeout`
+	covers only the run up to the first yield. The other transfer options are ignored.
 * **return** *[transferable]*
 
 Evaluate the module and return the last expression (same as script.run). If `evaluate` is called
@@ -412,7 +426,8 @@ more than once on the same module the return value from the first invocation wil
 thrown).
 
 **Note:** nodejs v14.8.0 enabled top-level await by default which has the effect of breaking the
-return value of this function.
+return value of this function. With `promise: true` the call waits for such a module to finish.
+The resolved value is still `undefined`: v8 fulfills the evaluation promise with no value.
 
 ##### `module.release()`
 

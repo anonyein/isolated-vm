@@ -155,6 +155,27 @@ declare namespace IsolatedVM {
 		 * work, and end the process by calling `process.abort()`.
 		 */
 		onCatastrophicError?: (message: string) => void;
+
+		/**
+		 * Callback to be invoked when a promise is rejected without a handler. By default such a
+		 * rejection is thrown out of whichever call into the isolate happens to be running, an `eval` or
+		 * an `apply` that may have nothing to do with the promise itself. If this callback is set,
+		 * nothing is thrown: each rejected value is copied out of the isolate, the way a thrown value
+		 * would be, and delivered to the callback in the isolate which created this one. For an isolate
+		 * created from node that means the callback runs on node's event loop. Errors thrown by the
+		 * callback are ignored.
+		 */
+		onUnhandledRejection?: (error: any) => void;
+
+		/**
+		 * Callback which resolves `import()` for the code this isolate runs. It accepts two parameters:
+		 * `specifier` and `referrer`, the `filename` given in the `ScriptOrigin` of the script or module
+		 * which called `import()`. It must return a `Module` which has been instantiated and evaluated,
+		 * or a promise for one, since the importing code is given that module's namespace. Nothing is
+		 * cached, so answer the same specifier with the same module. Without this option `import()`
+		 * rejects with "Not supported".
+		 */
+		importModuleDynamically?: (specifier: string, referrer: string) => Module | Promise<Module>;
 	};
 
 	export type ContextOptions = {
@@ -310,11 +331,13 @@ declare namespace IsolatedVM {
 		/**
 		 * Evaluate the module and return the last expression (same as script.run). If evaluate is
 		 * called more than once on the same module the return value from the first invocation will be
-		 * returned (or thrown).
+		 * returned (or thrown). A module which awaits at the top level keeps running after evaluate
+		 * resolves. With `promise: true` the call resolves once the module has finished, and rejects
+		 * with the error it threw.
 		 * @param options Optional
 		 */
 		evaluate(options?: ScriptRunOptions): Promise<Transferable>;
-		evaluateSync(options?: ScriptRunOptions): Transferable;
+		evaluateSync<Options extends ScriptRunOptions>(options?: Options): CheckPromise<Options, Transferable>;
 
 		/**
 		 * Releases this module. This behaves the same as other `.release()` methods.

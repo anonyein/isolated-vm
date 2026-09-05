@@ -117,6 +117,8 @@ class IsolateEnvironment : public std::enable_shared_from_this<IsolateEnvironmen
 
 	public:
 		RemoteHandle<v8::Function> error_handler;
+		RemoteHandle<v8::Function> unhandled_rejection_handler;
+		RemoteHandle<v8::Function> dynamic_import_handler;
 		std::unordered_multimap<int, struct ModuleInfo*> module_handles;
 		std::unordered_map<class NativeModule*, std::shared_ptr<NativeModule>> native_modules;
 		int terminate_depth = 0;
@@ -377,5 +379,6 @@ inline auto StringTable::Get() -> auto& {
 }
 
 auto RaiseCatastrophicError(RemoteHandle<v8::Function>& handler, const char* message) -> bool;
+void ReportUnhandledRejection(RemoteHandle<v8::Function>& handler, std::unique_ptr<ExternalCopy> error);
 
 } // namespace ivm

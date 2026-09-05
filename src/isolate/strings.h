@@ -60,6 +60,7 @@ class StringTable {
 		String function{"function"};
 		String global{"global"};
 		String ignored{"ignored"};
+		String importModuleDynamically{"importModuleDynamically"};
 		String inspector{"inspector"};
 		String isolateIsDisposed{"Isolate is disposed"};
 		String isolatedVm{"isolated-vm"};
@@ -72,6 +73,7 @@ class StringTable {
 		String number{"number"};
 		String object{"object"};
 		String onCatastrophicError{"onCatastrophicError"};
+		String onUnhandledRejection{"onUnhandledRejection"};
 		String produceCachedData{"produceCachedData"};
 		String promise{"promise"};
 		String reference{"reference"};

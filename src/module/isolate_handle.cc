@@ -72,6 +72,8 @@ auto IsolateHandle::Definition() -> Local<FunctionTemplate> {
 auto IsolateHandle::New(MaybeLocal<Object> maybe_options) -> unique_ptr<ClassHandle> {
 	shared_ptr<v8::BackingStore> snapshot_blob;
 	RemoteHandle<Function> error_handler;
+	RemoteHandle<Function> rejection_handler;
+	RemoteHandle<Function> dynamic_import_handler;
 	size_t snapshot_blob_length = 0;
 	size_t memory_limit = 128;
 	bool inspector = false;
@@ -111,6 +113,18 @@ auto IsolateHandle::New(MaybeLocal<Object> maybe_options) -> unique_ptr<ClassHan
 		if (maybe_handler.ToLocal(&error_handler_local)) {
 			error_handler = RemoteHandle<Function>{error_handler_local};
 		}
+
+		auto maybe_rejection_handler = ReadOption<MaybeLocal<Function>>(options, StringTable::Get().onUnhandledRejection, {});
+		Local<Function> rejection_handler_local;
+		if (maybe_rejection_handler.ToLocal(&rejection_handler_local)) {
+			rejection_handler = RemoteHandle<Function>{rejection_handler_local};
+		}
+
+		auto maybe_import_handler = ReadOption<MaybeLocal<Function>>(options, StringTable::Get().importModuleDynamically, {});
+		Local<Function> import_handler_local;
+		if (maybe_import_handler.ToLocal(&import_handler_local)) {
+			dynamic_import_handler = RemoteHandle<Function>{import_handler_local};
+		}
 	}
 
 	// Return isolate handle
@@ -118,6 +132,13 @@ auto IsolateHandle::New(MaybeLocal<Object> maybe_options) -> unique_ptr<ClassHan
 	auto env = holder->GetIsolate();
 	env->GetIsolate()->SetHostInitializeImportMetaObjectCallback(ModuleHandle::InitializeImportMeta);
 	env->error_handler = error_handler;
+	env->unhandled_rejection_handler = rejection_handler;
+	// An isolate without a handler never gets the callback, so its `import()` keeps rejecting with
+	// the "Not supported" error v8 raises on its own
+	if (dynamic_import_handler) {
+		env->dynamic_import_handler = std::move(dynamic_import_handler);
+		env->GetIsolate()->SetHostImportModuleDynamicallyCallback(ModuleHandle::ImportModuleDynamically);
+	}
 	if (inspector) {
 		env->EnableInspectorAgent();
 	}
